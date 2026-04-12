@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(pip install:*)",
+      "Bash(ls:*)",
+      "WebSearch",
+      "Bash(pip show:*)",
+      "Bash(scp:*)",
+      "Bash(PGPASSWORD='Kinetic2026!' psql:*)"
+    ]
+  }
+}

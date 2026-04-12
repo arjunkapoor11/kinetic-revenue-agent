@@ -1,0 +1,196 @@
+{
+  "main": {
+    "id": "25ef9f34b8aba98c",
+    "type": "split",
+    "children": [
+      {
+        "id": "42a800b22c91984e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "021712ee1c499d8a",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "analysis-framework.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "analysis-framework"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "21e3ce72a738464c",
+    "type": "split",
+    "children": [
+      {
+        "id": "de5cd967bb58ffae",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "819c6db29c9bb4e8",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "db08771845acf2ca",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "8bf5d55120a24ef1",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "75ac1b2ea51fe871",
+    "type": "split",
+    "children": [
+      {
+        "id": "faf901b089699e98",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "4817bd8a93e27392",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "analysis-framework.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for analysis-framework"
+            }
+          },
+          {
+            "id": "ed8eac5e0131d327",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "analysis-framework.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from analysis-framework"
+            }
+          },
+          {
+            "id": "2690519ca6bf6bf0",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "bf90d3085fc9a90a",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "2bd881d0566d68ab",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "analysis-framework.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of analysis-framework"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "021712ee1c499d8a",
+  "lastOpenFiles": [
+    "deployment.md",
+    "transcript-analysis.md",
+    "managed-agents.md",
+    "SKILL.md",
+    "analysis-framework.md",
+    "dashboard.md",
+    "data-ingestion.md"
+  ]
+}
