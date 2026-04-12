@@ -213,16 +213,21 @@ def flag_anomalies(qoq_data, seasonal):
     return flagged
 
 
-def classify_seasonal_trend(values, cv=0.0):
+def classify_seasonal_trend(values, cv=0.0, pct_values=None):
     """Classify $ QoQ trend for a seasonal quarter using Kinetic decision tree.
 
     Uses company-specific history (last 8 quarters of the same season).
-    High-CV seasons (>0.4) use exponential decay weighting for the volatile case.
+    For growing/accelerating: returns a % QoQ rate (applied to current base at projection time).
+    For flat/volatile/declining: returns absolute $ QoQ (stable or declining patterns).
+
+    Returns (trend_label, projected_value, is_pct_rate).
+    When is_pct_rate=True, projected_value is a decimal rate (e.g. 0.07 for 7%).
+    When is_pct_rate=False, projected_value is absolute $ QoQ.
     """
     if not values:
-        return "no_data", 0
+        return "no_data", 0, False
     if len(values) == 1:
-        return "insufficient", values[0]
+        return "insufficient", values[0], False
 
     n = len(values)
     last = values[-1]
@@ -231,35 +236,44 @@ def classify_seasonal_trend(values, cv=0.0):
     mean_val = statistics.mean(values)
     std_val = statistics.stdev(values)
     if mean_val != 0 and abs(std_val / mean_val) < 0.10:
-        return "flat", last
+        return "flat", last, False
 
     up = sum(1 for d in diffs if d > 0)
     down = sum(1 for d in diffs if d < 0)
     total = len(diffs)
 
     if up / total >= 0.6:
+        # Growing family — anchor on % QoQ rate, not $ QoQ
+        if pct_values and len(pct_values) >= 2:
+            avg_pct = statistics.mean(pct_values)
+        else:
+            avg_pct = mean_val  # fallback: won't happen if pct_values provided
+            return "growing", last, False
+
         recent = diffs[-min(3, len(diffs)):]
         if len(recent) >= 2:
             accel = [recent[i] - recent[i - 1] for i in range(1, len(recent))]
             if all(a > 0 for a in accel):
-                return "accelerating", round(last * 1.03)
+                # Accelerating: use avg % QoQ rate (no haircut — growth is increasing)
+                return "accelerating", avg_pct, True
             if all(a < 0 for a in accel):
-                return "decelerating", round(last * 0.92)
-        return "growing", last
+                # Decelerating: apply -8% haircut to the % QoQ rate
+                return "decelerating", avg_pct * 0.92, True
+        return "growing", avg_pct, True
 
     if down / total >= 0.6:
         recent_diffs = diffs[-min(3, len(diffs)):]
         avg_decline = statistics.mean(recent_diffs)
-        return "declining", round(last + avg_decline)
+        return "declining", round(last + avg_decline), False
 
-    # Volatile/mixed — use exponential decay for high-CV companies
+    # Volatile/mixed — use exponential decay on $ QoQ
     if cv > 0.4 and n >= 2:
         decay = 0.85
         weights = [decay ** (n - 1 - i) for i in range(n)]
     else:
         weights = list(range(1, n + 1))
     weighted = sum(v * w for v, w in zip(values, weights)) / sum(weights)
-    return "volatile", round(weighted)
+    return "volatile", round(weighted), False
 
 
 def compute_momentum(qoq_data):
@@ -355,9 +369,16 @@ def compute_forward_adjustments(anomalies, transcript_analyses):
 
     Returns a dict of modifiers to apply to the next quarter's $ QoQ projection:
       deal_clustering_haircut: -0.08 if prior quarter had deal-clustering anomaly
-      nrr_modifier: +0.03 if NRR improving, -0.03 if declining, 0 otherwise
+      nrr_modifier: +0.03 if NRR improving, -0.05 if declining
+      pipeline_modifier: -0.03 if management tone on pipeline is negative
+    Only applies where transcript data exists.
     """
-    adjustments = {"deal_clustering_haircut": 0.0, "nrr_modifier": 0.0, "flags": []}
+    adjustments = {
+        "deal_clustering_haircut": 0.0,
+        "nrr_modifier": 0.0,
+        "pipeline_modifier": 0.0,
+        "flags": [],
+    }
 
     # Check most recent anomaly for deal-clustering signals
     if anomalies:
@@ -375,9 +396,8 @@ def compute_forward_adjustments(anomalies, transcript_analyses):
                     adjustments["flags"].append(
                         f"deal_clustering ({latest['period']}): -8% haircut")
 
-    # Check most recent transcript analysis for NRR/expansion signals
+    # Check most recent transcript analysis for NRR/expansion and pipeline signals
     if transcript_analyses:
-        # Get the most recent analysis
         latest_period = max(transcript_analyses.keys())
         latest_ta = transcript_analyses[latest_period].lower()
 
@@ -396,8 +416,20 @@ def compute_forward_adjustments(anomalies, transcript_analyses):
             adjustments["nrr_modifier"] = 0.03
             adjustments["flags"].append(f"nrr_improving ({latest_period}): +3%")
         elif nrr_declining:
-            adjustments["nrr_modifier"] = -0.03
-            adjustments["flags"].append(f"nrr_declining ({latest_period}): -3%")
+            adjustments["nrr_modifier"] = -0.05
+            adjustments["flags"].append(f"nrr_declining ({latest_period}): -5%")
+
+        # Pipeline tone — negative signals
+        pipeline_negative = any(kw in latest_ta for kw in [
+            "pipeline weaken", "pipeline soften", "pipeline pressure",
+            "pipeline headwind", "pipeline concern", "pipeline slow",
+            "deal push", "elongat", "longer sales cycle",
+            "macro headwind", "macro pressure", "budget scrutin",
+            "spending caution", "demand soften", "demand weak",
+        ])
+        if pipeline_negative:
+            adjustments["pipeline_modifier"] = -0.03
+            adjustments["flags"].append(f"pipeline_negative ({latest_period}): -3%")
 
     return adjustments
 
@@ -417,33 +449,97 @@ def quarters_to_cutoff(last_period):
     return max(n, 4)
 
 
+def stl_project(actuals, n_forward):
+    """Run STL decomposition on quarterly revenue and project forward.
+
+    Returns dict mapping quarter offset (1-based) to projected revenue,
+    plus the decomposition components for diagnostics.
+    Requires at least 12 quarters of history (3 full seasonal cycles).
+    Returns None if insufficient data.
+    """
+    try:
+        from statsmodels.tsa.seasonal import STL
+        import numpy as np
+    except ImportError:
+        return None
+
+    revenues = [a["revenue"] for a in actuals]
+    if len(revenues) < 12:
+        return None
+
+    # STL decomposition: period=4 for quarterly data
+    series = np.array(revenues, dtype=float)
+    stl = STL(series, period=4, robust=True)
+    result = stl.fit()
+
+    trend = result.trend
+    seasonal_comp = result.seasonal
+
+    # Trend projection: average increment from last 4 quarters of trend
+    trend_diffs = [trend[i] - trend[i - 1] for i in range(max(1, len(trend) - 4), len(trend))]
+    avg_trend_increment = float(np.mean(trend_diffs))
+    last_trend = float(trend[-1])
+
+    # Seasonal component: last full cycle (most recent value for each season position)
+    # Position in the 4-quarter cycle: index % 4
+    last_seasonal = {}
+    for i in range(len(seasonal_comp) - 1, max(len(seasonal_comp) - 5, -1), -1):
+        pos = i % 4
+        if pos not in last_seasonal:
+            last_seasonal[pos] = float(seasonal_comp[i])
+
+    # Project forward
+    forward = {}
+    last_pos = (len(revenues) - 1) % 4
+    for i in range(1, n_forward + 1):
+        proj_trend = last_trend + avg_trend_increment * i
+        pos = (last_pos + i) % 4
+        proj_seasonal = last_seasonal.get(pos, 0)
+        forward[i] = round(proj_trend + proj_seasonal)
+
+    # Diagnostics: last 4 quarters of components
+    diag = {
+        "trend_last4": [round(float(t)) for t in trend[-4:]],
+        "seasonal_last4": [round(float(s)) for s in seasonal_comp[-4:]],
+        "avg_trend_increment": round(avg_trend_increment),
+        "n_quarters": len(revenues),
+    }
+
+    return forward, diag
+
+
 def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=None, transcript_analyses=None, n=None):
     """Project forward n quarters using Kinetic methodology.
 
     Q+1: consensus x (1 + avg beat %) — anchored to sell-side estimates.
-    Q+2 through Q+n: $ QoQ decision tree chained off beat-adjusted Q+1,
-        using company-specific seasonal baselines with CV-aware weighting
-        and forward-looking adjustments from transcript analysis.
-    Falls back to pure $ QoQ if no beat cadence or no Q+1 consensus.
+    Q+2 through Q+n: STL seasonal decomposition (trend + seasonal projection).
+        Falls back to % QoQ decision tree if <12 quarters of history.
+    Forward-looking adjustments applied as overlays on STL output.
     """
     if n is None:
         n = quarters_to_cutoff(actuals[-1]["period"])
-    by_q = defaultdict(list)
+
+    # Build $ QoQ and % QoQ per season (for fallback and CV computation)
+    by_q_dollar = defaultdict(list)
+    by_q_pct = defaultdict(list)
     for row in qoq_data:
-        by_q[row["quarter"]].append(row["qoq_dollar_change"])
+        by_q_dollar[row["quarter"]].append(row["qoq_dollar_change"])
+        by_q_pct[row["quarter"]].append(row["qoq_pct_change"] / 100)
 
     seasonal_forecasts = {}
     for q in ["Q1", "Q2", "Q3", "Q4"]:
-        all_values = by_q.get(q, [])
+        all_values = by_q_dollar.get(q, [])
+        all_pct = by_q_pct.get(q, [])
         if not all_values:
             continue
-        # Company-specific: use last 8 observations for this season
         values = all_values[-8:]
+        pct_values = all_pct[-8:]
         cv = seasonal[q]["cv"] if q in seasonal else 0
-        trend, projected = classify_seasonal_trend(values, cv=cv)
+        trend, projected, is_pct = classify_seasonal_trend(values, cv=cv, pct_values=pct_values)
         seasonal_forecasts[q] = {
             "trend": trend,
             "projected_qoq": projected,
+            "is_pct_rate": is_pct,
             "history": values,
             "cv": cv,
             "weighting": seasonal[q].get("weighting", "equal") if q in seasonal else "equal",
@@ -455,7 +551,13 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
     # Forward-looking adjustments from anomaly detection + transcripts
     fwd_adj = compute_forward_adjustments(
         anomalies or [], transcript_analyses or {})
-    total_fwd_modifier = 1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"]
+    total_fwd_modifier = 1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"] + fwd_adj["pipeline_modifier"]
+
+    # STL decomposition for Q+2+ projections
+    stl_result = stl_project(actuals, n)
+    stl_forward = stl_result[0] if stl_result else None
+    stl_diag = stl_result[1] if stl_result else None
+    use_stl = stl_forward is not None
 
     last_period = actuals[-1]["period"]
     actual_periods = {a["period"] for a in actuals}
@@ -487,19 +589,35 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
         consensus_match = est_by_yq.get((proj_year, proj_q))
 
         if i == 1 and consensus_match and beat_cadence:
+            # Q+1: beat-adjusted consensus (unchanged)
             proj_rev = round(consensus_match * (1 + beat_pct))
             method = "beat_adjusted"
             trend_used = "beat_adjusted"
+        elif use_stl and i >= 2:
+            # Q+2+: STL projection with forward-looking adjustments
+            stl_rev = stl_forward[i]
+            # Compute $ QoQ from STL
+            stl_qoq = stl_rev - prev_rev
+            # Apply forward-looking adjustments as overlay on $ QoQ
+            if fwd_adj["flags"]:
+                stl_qoq = round(stl_qoq * total_fwd_modifier)
+            proj_rev = prev_rev + stl_qoq
+            method = "stl_decomposition"
+            trend_used = "stl"
         else:
+            # Fallback: % QoQ decision tree (for <12 quarters or Q+1 without consensus)
             if q_key in seasonal_forecasts:
-                base_qoq = seasonal_forecasts[q_key]["projected_qoq"]
-                trend_used = seasonal_forecasts[q_key]["trend"]
+                sf_entry = seasonal_forecasts[q_key]
+                trend_used = sf_entry["trend"]
+                if sf_entry["is_pct_rate"]:
+                    pct_rate = sf_entry["projected_qoq"]
+                    base_qoq = round(prev_rev * pct_rate)
+                else:
+                    base_qoq = sf_entry["projected_qoq"]
             else:
                 base_qoq = 0
                 trend_used = "no_data"
-            # Apply momentum overlay
             adjusted_qoq = round(base_qoq * momentum_factor)
-            # Apply forward-looking adjustment (deal clustering, NRR)
             if fwd_adj["flags"]:
                 adjusted_qoq = round(adjusted_qoq * total_fwd_modifier)
             proj_rev = prev_rev + adjusted_qoq
@@ -522,39 +640,51 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
         })
         prev_rev = proj_rev
 
-    return projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj
+    return projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj, stl_diag
 
 
 def build_guide_inference(projections, beat_cadence):
     """Build implied guide for Q+2 only — the first unguided quarter.
 
-    Implied guide = Q+2 projected actual / (1 + avg beat %).
+    Uses beat-cadence framework for the guide signal (best directional accuracy):
+      beat_adjusted_actual = Q+2 consensus × (1 + beat %)
+      implied_guide = beat_adjusted_actual / (1 + beat %)  [= consensus, by construction]
+    The GUIDE signal compares our beat-adjusted Q+2 estimate vs consensus.
+
+    The STL revenue projection is stored separately as projected_actual.
+    These can legitimately differ: STL = best magnitude, beat-cadence = best direction.
     """
     if not beat_cadence or len(projections) < 2:
         return None
 
     beat_pct = beat_cadence["selected_beat_pct"] / 100
     q2 = projections[1]  # Q+2
-
-    implied_guide = round(q2["projected_revenue"] / (1 + beat_pct))
     consensus = q2.get("consensus")
 
-    gap_dollars = round(implied_guide - consensus) if consensus else None
-    gap_pct = round((implied_guide - consensus) / consensus * 100, 2) if consensus else None
+    if not consensus:
+        return None
 
-    gap_signal = None
-    if gap_pct is not None:
-        if gap_pct > 2:
-            gap_signal = "GUIDE ABOVE"
-        elif gap_pct < -2:
-            gap_signal = "GUIDE BELOW"
-        else:
-            gap_signal = "GUIDE IN-LINE"
+    # Beat-cadence driven: what will the company actually print for Q+2?
+    beat_adjusted_actual = round(consensus * (1 + beat_pct))
+    # Implied guide: what will management guide to?
+    implied_guide = round(beat_adjusted_actual / (1 + beat_pct))
+    # Note: implied_guide ≈ consensus by construction for Q+2.
+    # The signal comes from comparing our beat-adjusted ACTUAL vs consensus.
+    gap_dollars = round(beat_adjusted_actual - consensus)
+    gap_pct = round((beat_adjusted_actual - consensus) / consensus * 100, 2)
+
+    if gap_pct > 2:
+        gap_signal = "GUIDE ABOVE"
+    elif gap_pct < -2:
+        gap_signal = "GUIDE BELOW"
+    else:
+        gap_signal = "GUIDE IN-LINE"
 
     return {
         "period": q2["period"],
         "quarter": q2["quarter"],
-        "projected_actual": q2["projected_revenue"],
+        "projected_actual": q2["projected_revenue"],      # STL estimate (best magnitude)
+        "beat_adjusted_actual": beat_adjusted_actual,      # beat-cadence estimate (best direction)
         "implied_guide": implied_guide,
         "consensus": consensus,
         "gap_dollars": gap_dollars,
@@ -628,9 +758,9 @@ def run_agent(ticker):
         if ta:
             anomaly["management_commentary"] = ta
 
-    projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj = \
+    projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj, stl_diag = \
         extrapolate(actuals, qoq, estimates, beat_cadence, seasonal,
-                    anomalies=anomalies, transcript_analyses=transcript_analyses, n=4)
+                    anomalies=anomalies, transcript_analyses=transcript_analyses)
 
     guide_inference = build_guide_inference(projections, beat_cadence)
     next_q, current_fy, next_fy = consensus_comparison(actuals, projections, estimates)
@@ -658,9 +788,10 @@ def run_agent(ticker):
             "recent_qoq": [r["qoq_dollar_change"] for r in qoq[-3:]]
         },
         "forward_adjustments": {
-            "total_modifier": round(1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"], 3),
+            "total_modifier": round(1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"] + fwd_adj["pipeline_modifier"], 3),
             "deal_clustering_haircut": fwd_adj["deal_clustering_haircut"],
             "nrr_modifier": fwd_adj["nrr_modifier"],
+            "pipeline_modifier": fwd_adj["pipeline_modifier"],
             "flags": fwd_adj["flags"],
         },
         "qoq_yoy": qoq_yoy[-8:] if qoq_yoy else [],
@@ -668,6 +799,7 @@ def run_agent(ticker):
         "forward_projections": projections,
         "beat_cadence": beat_cadence,
         "guide_inference_q2": guide_inference,
+        "stl_diagnostics": stl_diag,
         "consensus_comparison": {
             "next_quarter": next_q,
             "current_fy": current_fy,

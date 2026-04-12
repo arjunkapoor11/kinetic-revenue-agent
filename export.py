@@ -142,38 +142,43 @@ def compute_seasonality(qoq):
     return s
 
 
-def classify_seasonal_trend(vals, cv=0.0):
+def classify_seasonal_trend(vals, cv=0.0, pct_values=None):
+    """Returns (trend, projected_value, is_pct_rate).
+    Growing/accelerating/decelerating return a % rate; others return $ QoQ."""
     if not vals:
-        return "no_data", 0
+        return "no_data", 0, False
     if len(vals) == 1:
-        return "insufficient", vals[0]
+        return "insufficient", vals[0], False
     last = vals[-1]
     diffs = [vals[i] - vals[i - 1] for i in range(1, len(vals))]
     m = statistics.mean(vals)
     sd = statistics.stdev(vals)
     if m and abs(sd / m) < 0.10:
-        return "flat", last
+        return "flat", last, False
     up = sum(1 for d in diffs if d > 0)
     total = len(diffs)
     if up / total >= 0.6:
+        if pct_values and len(pct_values) >= 2:
+            avg_pct = statistics.mean(pct_values)
+        else:
+            return "growing", last, False
         rc = diffs[-min(3, len(diffs)):]
         if len(rc) >= 2:
             a2 = [rc[i] - rc[i - 1] for i in range(1, len(rc))]
             if all(a > 0 for a in a2):
-                return "accelerating", round(last * 1.03)
+                return "accelerating", avg_pct, True
             if all(a < 0 for a in a2):
-                return "decelerating", round(last * 0.92)
-        return "growing", last
+                return "decelerating", avg_pct * 0.92, True
+        return "growing", avg_pct, True
     dn = sum(1 for d in diffs if d < 0)
     if dn / total >= 0.6:
-        return "declining", round(last + statistics.mean(diffs[-min(3, len(diffs)):]))
-    # Volatile — exponential decay for high-CV companies
+        return "declining", round(last + statistics.mean(diffs[-min(3, len(diffs)):])), False
     if cv > 0.4 and len(vals) >= 2:
         decay = 0.85
         w = [decay ** (len(vals) - 1 - i) for i in range(len(vals))]
     else:
         w = list(range(1, len(vals) + 1))
-    return "volatile", round(sum(v * wt for v, wt in zip(vals, w)) / sum(w))
+    return "volatile", round(sum(v * wt for v, wt in zip(vals, w)) / sum(w)), False
 
 
 def compute_momentum(qoq):
@@ -203,23 +208,65 @@ def quarters_to_cutoff(last_period):
     return max(n, 4)
 
 
+def _stl_project_export(actuals, n_forward):
+    """STL decomposition for export.py — same logic as agent.py."""
+    try:
+        from statsmodels.tsa.seasonal import STL
+        import numpy as np
+    except ImportError:
+        return None
+    revenues = [a["revenue"] for a in actuals]
+    if len(revenues) < 12:
+        return None
+    series = np.array(revenues, dtype=float)
+    stl = STL(series, period=4, robust=True)
+    result = stl.fit()
+    trend = result.trend
+    seasonal_comp = result.seasonal
+    trend_diffs = [trend[i] - trend[i - 1] for i in range(max(1, len(trend) - 4), len(trend))]
+    avg_inc = float(np.mean(trend_diffs))
+    last_trend = float(trend[-1])
+    last_seasonal = {}
+    for i in range(len(seasonal_comp) - 1, max(len(seasonal_comp) - 5, -1), -1):
+        pos = i % 4
+        if pos not in last_seasonal:
+            last_seasonal[pos] = float(seasonal_comp[i])
+    forward = {}
+    last_pos = (len(revenues) - 1) % 4
+    for i in range(1, n_forward + 1):
+        proj_trend = last_trend + avg_inc * i
+        pos = (last_pos + i) % 4
+        forward[i] = round(proj_trend + last_seasonal.get(pos, 0))
+    return forward
+
+
 def extrapolate(actuals, qoq, estimates, beat_cadence, seasonal, n=None):
-    """Company-specific seasonality + CV weighting. Extrapolates through FY27 cutoff."""
+    """Q+1: beat-adjusted. Q+2+: STL decomposition (fallback: % QoQ decision tree)."""
     if n is None:
         n = quarters_to_cutoff(actuals[-1]["period"])
-    by_q = defaultdict(list)
+
+    by_q_dollar = defaultdict(list)
+    by_q_pct = defaultdict(list)
     for r in qoq:
-        by_q[r["quarter"]].append(r["qoq_dollar_change"])
+        by_q_dollar[r["quarter"]].append(r["qoq_dollar_change"])
+        by_q_pct[r["quarter"]].append(r["qoq_pct_change"] / 100)
+
     sf = {}
     for q in ("Q1", "Q2", "Q3", "Q4"):
-        all_v = by_q.get(q, [])
+        all_v = by_q_dollar.get(q, [])
+        all_p = by_q_pct.get(q, [])
         if not all_v:
             continue
         v = all_v[-8:]
+        pv = all_p[-8:]
         cv = seasonal[q]["cv"] if q in seasonal else 0
-        t, p = classify_seasonal_trend(v, cv=cv)
-        sf[q] = {"trend": t, "projected_qoq": p, "cv": cv}
+        t, p, is_pct = classify_seasonal_trend(v, cv=cv, pct_values=pv)
+        sf[q] = {"trend": t, "projected_qoq": p, "is_pct_rate": is_pct, "cv": cv}
     ml, mf = compute_momentum(qoq)
+
+    # STL decomposition for Q+2+
+    stl_fwd = _stl_project_export(actuals, n)
+    use_stl = stl_fwd is not None
 
     last_period = actuals[-1]["period"]
     actual_yqs = set()
@@ -248,8 +295,20 @@ def extrapolate(actuals, qoq, estimates, beat_cadence, seasonal, n=None):
         if i == 1 and con and beat_cadence:
             rev = round(con * (1 + beat_pct))
             method = "beat_adjusted"
+        elif use_stl and i >= 2:
+            stl_rev = stl_fwd[i]
+            stl_qoq = stl_rev - prev
+            rev = prev + stl_qoq
+            method = "stl_decomposition"
         else:
-            bqoq = sf[qk]["projected_qoq"] if qk in sf else 0
+            if qk in sf:
+                sf_e = sf[qk]
+                if sf_e["is_pct_rate"]:
+                    bqoq = round(prev * sf_e["projected_qoq"])
+                else:
+                    bqoq = sf_e["projected_qoq"]
+            else:
+                bqoq = 0
             aqoq = round(bqoq * mf)
             rev = prev + aqoq
             method = "qoq_extrapolation"
@@ -314,19 +373,23 @@ def compute_beat_cadence(ticker):
 
 
 def build_guide_inference(projections, beat_cadence):
+    """Beat-cadence driven guide signal (best directional accuracy)."""
     if not beat_cadence or len(projections) < 2:
         return None
     bp = beat_cadence["selected_beat_pct"] / 100
     q2 = projections[1]
-    ig = round(q2["projected_revenue"] / (1 + bp))
     con = q2.get("consensus")
-    gd = round(ig - con) if con else None
-    gp = round((ig - con) / con * 100, 2) if con else None
-    gs = None
-    if gp is not None:
-        gs = "GUIDE ABOVE" if gp > 2 else ("GUIDE BELOW" if gp < -2 else "GUIDE IN-LINE")
+    if not con:
+        return None
+    ba = round(con * (1 + bp))  # beat-adjusted actual
+    ig = round(ba / (1 + bp))   # implied guide
+    gd = round(ba - con)
+    gp = round((ba - con) / con * 100, 2)
+    gs = "GUIDE ABOVE" if gp > 2 else ("GUIDE BELOW" if gp < -2 else "GUIDE IN-LINE")
     return {"period": q2["period"], "quarter": q2["quarter"],
-            "projected_actual": q2["projected_revenue"], "implied_guide": ig,
+            "projected_actual": q2["projected_revenue"],
+            "beat_adjusted_actual": ba,
+            "implied_guide": ig,
             "consensus": con, "gap_dollars": gd, "gap_pct": gp, "signal": gs,
             "beat_cadence": beat_cadence}
 
@@ -663,7 +726,7 @@ def build_ticker_sheet(wb, ticker, data):
 
     ws.cell(row=R_VAR, column=2, value="   % Variance vs Consensus").font = F_IT
 
-    ws.cell(row=R_GD, column=2, value="Implied Q+2 Guide").font = F_BOLD
+    ws.cell(row=R_GD, column=2, value="Beat-Adj Q+2 Actual").font = F_BOLD
     ws.cell(row=R_GYP, column=2, value="   % YoY").font = F_IT
     ws.cell(row=R_GQP, column=2, value="   % QoQ").font = F_IT
     ws.cell(row=R_GYD, column=2, value="   $ YoY").font = F_IT
@@ -974,9 +1037,11 @@ def build_ticker_sheet(wb, ticker, data):
         gd = datetime.strptime(gi["period"], "%Y-%m-%d")
         gq = quarter_from_date(gi["period"])
 
-        # Guide revenue: formula = Q+2 revenue / (1 + beat %)
+        # Guide row: beat-adjusted actual = consensus × (1 + beat %)
+        # This is the beat-cadence revenue estimate (best directional accuracy)
+        # Differs from STL revenue row — both views are shown
         cell = ws.cell(row=R_GD, column=gi_ci,
-                       value=f"={cr(R_REV, gi_ci)}/(1+{beat_ref})")
+                       value=f"={cr(R_CON, gi_ci)}*(1+{beat_ref})")
         cell.font = F_BOLD
         cell.number_format = N_REV
         cell.alignment = A_R

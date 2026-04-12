@@ -55,7 +55,7 @@ def load_from_secrets_manager(secret_name: str, region: str):
     secrets = json.loads(response["SecretString"])
 
     for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD",
-                "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY"):
+                "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY", "SLACK_WEBHOOK"):
         if key in secrets:
             os.environ[key] = secrets[key]
 
@@ -145,21 +145,24 @@ def ingest_transcripts(tickers: list[str] | None = None) -> str:
 
 
 @mcp.tool()
-def analyze_transcripts(tickers: list[str] | None = None) -> str:
+def analyze_transcripts(ticker: str = "") -> str:
     """Step 3: Analyze earnings call transcripts for anomalous quarters using
-    Claude. For each anomalous quarter with a transcript, identifies management
-    commentary explaining revenue distortions.
+    Claude for a SINGLE ticker. Call this tool once per ticker. Identifies
+    management commentary explaining revenue distortions.
 
     Args:
-        tickers: Ticker symbols to process (default: all 5)
+        ticker: A single ticker symbol (e.g. "SNOW"). Required.
     """
+    if not ticker:
+        return "[analyze_transcripts] FAILED — ticker is required. Call once per ticker."
+
     def run():
         sys.path.insert(0, str(PROJECT_DIR))
         import transcript_analyzer
-        transcript_analyzer.TICKERS = list(tickers or DEFAULT_TICKERS)
+        transcript_analyzer.TICKERS = [ticker]
         transcript_analyzer.run_analysis()
 
-    return _fmt("analyze_transcripts", _run(run))
+    return _fmt(f"analyze_transcripts({ticker})", _run(run))
 
 
 @mcp.tool()
@@ -224,6 +227,21 @@ def export_to_excel() -> str:
     return _fmt("export_to_excel", _run(run))
 
 
+@mcp.tool()
+def post_to_slack() -> str:
+    """Step 7: Post pipeline summary to Slack #software-dashboard channel.
+    Reads the most recent guide inference signals from the database and
+    posts a formatted summary with GUIDE ABOVE / GUIDE BELOW signals.
+    No arguments required.
+    """
+    def run():
+        sys.path.insert(0, str(PROJECT_DIR))
+        from slack_notify import build_and_post
+        build_and_post()
+
+    return _fmt("post_to_slack", _run(run))
+
+
 # ── main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -249,7 +267,7 @@ def main():
     print(f"[server] Starting MCP server on {args.host}:{args.port}")
     print(f"[server] Streamable HTTP endpoint: http://{args.host}:{args.port}/mcp")
     print(f"[server] Tools: ingest_data, ingest_transcripts, analyze_transcripts, "
-          f"run_analysis, generate_dashboard, export_to_excel")
+          f"run_analysis, generate_dashboard, export_to_excel, post_to_slack")
 
     mcp.run(transport="streamable-http")
 

@@ -23,29 +23,17 @@ if not environment_id:
 session = client.beta.sessions.create(
     agent=AGENT_ID,
     environment_id=environment_id,
-    title="Full pipeline — 48 tickers",
+    title="Full pipeline — 10 tickers (test)",
 )
 print(f"Session: {session.id}")
 
-TICKERS = [
-    "SNOW", "DDOG", "MDB", "TENB", "QLYS",
-    "NOW", "ADBE", "INTU", "WDAY", "PANW",
-    "CDNS", "SNPS", "ADSK", "APP", "FTNT",
-    "TEAM", "VEEV", "ROP", "PLTR",
-    "HUBS", "ZS", "CRWD", "OKTA", "TTD",
-    "GTLB", "BILL", "MNDY", "CFLT", "ESTC",
-    "FROG", "S", "ZI", "DT", "TOST",
-    "PCTY", "PAYC", "GWRE", "BSY", "CWAN",
-    "NCNO", "BRZE", "KVYO", "PCOR", "SPSC",
-    "MANH", "AZPN", "APPN", "DOCN",
-]
+TICKERS = ["SNOW", "DDOG", "MDB", "CRWD", "NOW", "PANW", "ZS", "PLTR", "APP", "HUBS"]
 TICKERS_JSON = str(TICKERS)
 
 
 # ── Checkpoint system ─────────────────────────────────────────────────────
 
 def load_checkpoint():
-    """Read completed step:ticker pairs from checkpoint file."""
     if not CHECKPOINT_FILE.exists():
         return set()
     completed = set()
@@ -57,13 +45,11 @@ def load_checkpoint():
 
 
 def save_checkpoint(step_ticker):
-    """Append a completed step:ticker to the checkpoint file."""
     with open(CHECKPOINT_FILE, "a") as f:
         f.write(step_ticker + "\n")
 
 
 def clear_checkpoint():
-    """Remove checkpoint file at the start of a fresh run."""
     if CHECKPOINT_FILE.exists():
         CHECKPOINT_FILE.unlink()
 
