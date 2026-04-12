@@ -449,13 +449,17 @@ def quarters_to_cutoff(last_period):
     return max(n, 4)
 
 
-def stl_project(actuals, n_forward):
+def stl_project(actuals, n_forward, anomalies=None, transcript_analyses=None):
     """Run STL decomposition on quarterly revenue and project forward.
 
-    Returns dict mapping quarter offset (1-based) to projected revenue,
-    plus the decomposition components for diagnostics.
-    Requires at least 12 quarters of history (3 full seasonal cycles).
-    Returns None if insufficient data.
+    Applies excess-decay dampening: outer quarters converge toward the
+    company's long-run avg % QoQ rather than toward zero.
+
+    For anomalous quarters classified as partially structural in transcript
+    analysis, adjusts the seasonal component upward by 50% of the anomaly
+    excess above trend.
+
+    Returns (forward_dict, diagnostics) or None if insufficient data.
     """
     try:
         from statsmodels.tsa.seasonal import STL
@@ -466,6 +470,19 @@ def stl_project(actuals, n_forward):
     revenues = [a["revenue"] for a in actuals]
     if len(revenues) < 12:
         return None
+
+    # Regime detection: if 4Q avg % QoQ exceeds 8Q by >1pp (acceleration),
+    # truncate to last 12 quarters so STL fits the current regime, not the old one.
+    pct_check_8q = []
+    for i in range(max(1, len(revenues) - 8), len(revenues)):
+        if revenues[i - 1] > 0:
+            pct_check_8q.append((revenues[i] - revenues[i - 1]) / revenues[i - 1])
+    pct_check_4q = pct_check_8q[-4:] if len(pct_check_8q) >= 4 else pct_check_8q
+    if pct_check_4q and pct_check_8q:
+        gap = float(np.mean(pct_check_4q)) - float(np.mean(pct_check_8q))
+        if gap > 0.01 and len(revenues) > 12:
+            revenues = revenues[-12:]
+            actuals = actuals[-12:]
 
     # STL decomposition: period=4 for quarterly data
     series = np.array(revenues, dtype=float)
@@ -480,28 +497,108 @@ def stl_project(actuals, n_forward):
     avg_trend_increment = float(np.mean(trend_diffs))
     last_trend = float(trend[-1])
 
-    # Seasonal component: last full cycle (most recent value for each season position)
-    # Position in the 4-quarter cycle: index % 4
+    # Seasonal component: last full cycle
     last_seasonal = {}
     for i in range(len(seasonal_comp) - 1, max(len(seasonal_comp) - 5, -1), -1):
         pos = i % 4
         if pos not in last_seasonal:
             last_seasonal[pos] = float(seasonal_comp[i])
 
-    # Project forward
+    # Adjust seasonal for partially-structural anomalies:
+    # If transcript analysis flags an anomaly as not fully one-time,
+    # add 50% of the anomaly excess (actual - trend) to that season's component.
+    seasonal_adjustments = {}
+    if anomalies and transcript_analyses:
+        for anom in anomalies:
+            ta = transcript_analyses.get(anom["period"], "")
+            if not ta:
+                continue
+            ta_lower = ta.lower()
+            # Check for structural language (NOT fully one-time)
+            is_structural = any(kw in ta_lower for kw in [
+                "structural", "sustainable", "recurring", "durable",
+                "new baseline", "step-change", "permanent",
+                "platform shift", "product-driven",
+            ])
+            is_one_time = any(kw in ta_lower for kw in [
+                "one-time", "one time", "non-recurring", "catch-up",
+                "pull-forward", "backlog flush",
+            ])
+            # Apply adjustment if any structural signal exists
+            # (partially structural = both flags present, still deserves 50% credit)
+            if is_structural:
+                # Use the anomaly's QoQ excess above seasonal average
+                # (from flag_anomalies: actual_qoq_change - seasonal_avg)
+                qoq_excess = anom.get("actual_qoq_change", 0) - anom.get("seasonal_avg", 0)
+                if qoq_excess > 0:
+                    adjustment = qoq_excess * 0.5
+                    # Find the cycle position for this quarter
+                    for idx, a in enumerate(actuals):
+                        if a["period"] == anom["period"]:
+                            pos = idx % 4
+                            if pos not in seasonal_adjustments or adjustment > seasonal_adjustments[pos]:
+                                seasonal_adjustments[pos] = adjustment
+                            break
+
+    for pos, adj in seasonal_adjustments.items():
+        last_seasonal[pos] = last_seasonal.get(pos, 0) + adj
+
+    # Baseline % QoQ: use 4Q if accelerating (>1pp above 8Q), else 8Q
+    pct_8q = []
+    for i in range(max(1, len(revenues) - 8), len(revenues)):
+        if revenues[i - 1] > 0:
+            pct_8q.append((revenues[i] - revenues[i - 1]) / revenues[i - 1])
+    pct_4q = pct_8q[-4:] if len(pct_8q) >= 4 else pct_8q
+
+    avg_8q = float(np.mean(pct_8q)) if pct_8q else 0
+    avg_4q = float(np.mean(pct_4q)) if pct_4q else 0
+    acceleration_gap = avg_4q - avg_8q
+
+    if acceleration_gap > 0.01:  # 4Q avg > 8Q avg by >1pp
+        long_run_pct = avg_4q
+        baseline_source = "4Q (acceleration)"
+    else:
+        long_run_pct = avg_8q
+        baseline_source = "8Q"
+
+    # Build raw STL projections first (undampened) to compute implied % QoQ
+    EXCESS_DECAY = 0.85
     forward = {}
     last_pos = (len(revenues) - 1) % 4
-    for i in range(1, n_forward + 1):
-        proj_trend = last_trend + avg_trend_increment * i
-        pos = (last_pos + i) % 4
-        proj_seasonal = last_seasonal.get(pos, 0)
-        forward[i] = round(proj_trend + proj_seasonal)
+    prev_rev = float(revenues[-1])
 
-    # Diagnostics: last 4 quarters of components
+    for i in range(1, n_forward + 1):
+        # Raw STL projection for this quarter
+        raw_trend = last_trend + avg_trend_increment * i
+        pos = (last_pos + i) % 4
+        raw_seasonal = last_seasonal.get(pos, 0)
+        raw_rev = raw_trend + raw_seasonal
+
+        # Implied % QoQ from STL
+        stl_pct_qoq = (raw_rev - prev_rev) / prev_rev if prev_rev > 0 else 0
+
+        # Excess above long-run baseline
+        excess = stl_pct_qoq - long_run_pct
+
+        # Dampen only the excess — long-run baseline stays intact
+        dampened_pct = long_run_pct + excess * (EXCESS_DECAY ** (i - 1))
+
+        # Apply dampened % QoQ to projected base (compounding)
+        proj_rev = prev_rev * (1 + dampened_pct)
+        forward[i] = round(proj_rev)
+        prev_rev = proj_rev
+
     diag = {
         "trend_last4": [round(float(t)) for t in trend[-4:]],
         "seasonal_last4": [round(float(s)) for s in seasonal_comp[-4:]],
         "avg_trend_increment": round(avg_trend_increment),
+        "baseline_pct_qoq": round(long_run_pct * 100, 2),
+        "baseline_source": baseline_source,
+        "avg_4q_pct_qoq": round(avg_4q * 100, 2),
+        "avg_8q_pct_qoq": round(avg_8q * 100, 2),
+        "acceleration_gap_pp": round(acceleration_gap * 100, 2),
+        "excess_decay": EXCESS_DECAY,
+        "seasonal_adjustments": {str(k): round(v) for k, v in seasonal_adjustments.items()},
         "n_quarters": len(revenues),
     }
 
@@ -554,7 +651,7 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
     total_fwd_modifier = 1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"] + fwd_adj["pipeline_modifier"]
 
     # STL decomposition for Q+2+ projections
-    stl_result = stl_project(actuals, n)
+    stl_result = stl_project(actuals, n, anomalies=anomalies, transcript_analyses=transcript_analyses)
     stl_forward = stl_result[0] if stl_result else None
     stl_diag = stl_result[1] if stl_result else None
     use_stl = stl_forward is not None
@@ -595,15 +692,47 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
             trend_used = "beat_adjusted"
         elif use_stl and i >= 2:
             # Q+2+: STL projection with forward-looking adjustments
+            # Use STL's own inter-step $ QoQ (not relative to prev_rev which may
+            # have been adjusted by a fallback on a prior quarter)
             stl_rev = stl_forward[i]
-            # Compute $ QoQ from STL
-            stl_qoq = stl_rev - prev_rev
-            # Apply forward-looking adjustments as overlay on $ QoQ
-            if fwd_adj["flags"]:
-                stl_qoq = round(stl_qoq * total_fwd_modifier)
-            proj_rev = prev_rev + stl_qoq
-            method = "stl_decomposition"
-            trend_used = "stl"
+            stl_prev = stl_forward[i - 1] if i > 1 else actuals[-1]["revenue"]
+            stl_qoq = stl_rev - stl_prev  # STL's own $ QoQ for this season
+
+            # Sanity check: if STL $ QoQ deviates > 2.5 sigma from
+            # the trailing 3-period seasonal average, fall back to % QoQ
+            stl_failed = False
+            season_history = by_q_dollar.get(q_key, [])
+            if len(season_history) >= 3:
+                recent_3 = season_history[-3:]
+                s_mean = statistics.mean(recent_3)
+                s_std = statistics.stdev(recent_3) if len(recent_3) > 1 else 0
+                if s_std > 0 and abs(stl_qoq - s_mean) / s_std > 2.5:
+                    stl_failed = True
+
+            if stl_failed:
+                # Fall back to % QoQ decision tree for this quarter
+                if q_key in seasonal_forecasts:
+                    sf_entry = seasonal_forecasts[q_key]
+                    trend_used = sf_entry["trend"]
+                    if sf_entry["is_pct_rate"]:
+                        base_qoq = round(prev_rev * sf_entry["projected_qoq"])
+                    else:
+                        base_qoq = sf_entry["projected_qoq"]
+                else:
+                    base_qoq = 0
+                    trend_used = "no_data"
+                adjusted_qoq = round(base_qoq * momentum_factor)
+                if fwd_adj["flags"]:
+                    adjusted_qoq = round(adjusted_qoq * total_fwd_modifier)
+                proj_rev = prev_rev + adjusted_qoq
+                method = "qoq_fallback(stl_outlier)"
+            else:
+                # Apply STL's own seasonal $ QoQ to our actual prev_rev
+                if fwd_adj["flags"]:
+                    stl_qoq = round(stl_qoq * total_fwd_modifier)
+                proj_rev = prev_rev + stl_qoq
+                method = "stl_decomposition"
+                trend_used = "stl"
         else:
             # Fallback: % QoQ decision tree (for <12 quarters or Q+1 without consensus)
             if q_key in seasonal_forecasts:
@@ -883,12 +1012,20 @@ Use exact numbers from the data. Format with headers and tables."""
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Kinetic Revenue Agent")
+    parser.add_argument("--tickers", type=str, default=None,
+                        help="Comma-separated tickers (default: all)")
+    args = parser.parse_args()
+
+    tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else TICKERS
+
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(run_agent, t): t for t in TICKERS}
+        futures = {pool.submit(run_agent, t): t for t in tickers}
         for future in as_completed(futures):
             ticker = futures[future]
             try:
                 future.result()
             except Exception as e:
                 print(f"\nERROR processing {ticker}: {e}")
-    print("\nAll reports complete and saved to database.")
+    print(f"\nAll {len(tickers)} reports complete and saved to database.")

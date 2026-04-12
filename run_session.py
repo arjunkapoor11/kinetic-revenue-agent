@@ -57,9 +57,12 @@ def load_checkpoint():
 
 
 def save_checkpoint(step_ticker):
-    """Append a completed step:ticker to the checkpoint file."""
+    """Append a completed step:ticker to the checkpoint file. Flush to disk immediately."""
     with open(CHECKPOINT_FILE, "a") as f:
         f.write(step_ticker + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    print(f"[checkpoint] Saved: {step_ticker}")
 
 
 def clear_checkpoint():
@@ -148,9 +151,13 @@ for i, ticker in enumerate(TICKERS, 1):
             f"Nothing else — just this one ticker."
         )
         save_checkpoint(key)
-    except Exception as e:
-        print(f"\n[ERROR] Step 3 {ticker} failed at loop level: {type(e).__name__}: {e}")
-        print(f"[ERROR] Continuing to next ticker.")
+    except KeyboardInterrupt:
+        print(f"\n[ABORT] Interrupted during step 3 {ticker}. Resume with: python run_session.py")
+        sys.exit(1)
+    except BaseException as e:
+        print(f"\n[ERROR] Step 3 {ticker} failed: {type(e).__name__}: {e}", flush=True)
+        print(f"[ERROR] Continuing to next ticker.", flush=True)
+        time.sleep(2)
 
 # Step 4 — run_analysis, one ticker at a time
 for i, ticker in enumerate(TICKERS, 1):
@@ -166,9 +173,13 @@ for i, ticker in enumerate(TICKERS, 1):
             f"Nothing else — just this one ticker."
         )
         save_checkpoint(key)
-    except Exception as e:
-        print(f"\n[ERROR] Step 4 {ticker} failed at loop level: {type(e).__name__}: {e}")
-        print(f"[ERROR] Continuing to next ticker.")
+    except KeyboardInterrupt:
+        print(f"\n[ABORT] Interrupted during step 4 {ticker}. Resume with: python run_session.py")
+        sys.exit(1)
+    except BaseException as e:
+        print(f"\n[ERROR] Step 4 {ticker} failed: {type(e).__name__}: {e}", flush=True)
+        print(f"[ERROR] Continuing to next ticker.", flush=True)
+        time.sleep(2)
 
 # Step 5 — generate_dashboard
 if "step5:generate_dashboard" not in completed:

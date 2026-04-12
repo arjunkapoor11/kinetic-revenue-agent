@@ -209,7 +209,7 @@ def quarters_to_cutoff(last_period):
 
 
 def _stl_project_export(actuals, n_forward):
-    """STL decomposition for export.py — same logic as agent.py."""
+    """STL with excess-decay dampening — mirrors agent.py."""
     try:
         from statsmodels.tsa.seasonal import STL
         import numpy as np
@@ -218,6 +218,12 @@ def _stl_project_export(actuals, n_forward):
     revenues = [a["revenue"] for a in actuals]
     if len(revenues) < 12:
         return None
+    # Regime truncation: accelerating companies use last 12Q only
+    pct_8 = [(revenues[i]-revenues[i-1])/revenues[i-1]
+             for i in range(max(1,len(revenues)-8), len(revenues)) if revenues[i-1]>0]
+    pct_4 = pct_8[-4:] if len(pct_8)>=4 else pct_8
+    if pct_4 and pct_8 and (np.mean(pct_4)-np.mean(pct_8))>0.01 and len(revenues)>12:
+        revenues = revenues[-12:]
     series = np.array(revenues, dtype=float)
     stl = STL(series, period=4, robust=True)
     result = stl.fit()
@@ -231,12 +237,28 @@ def _stl_project_export(actuals, n_forward):
         pos = i % 4
         if pos not in last_seasonal:
             last_seasonal[pos] = float(seasonal_comp[i])
+    pct_8q = []
+    for i in range(max(1, len(revenues) - 8), len(revenues)):
+        if revenues[i - 1] > 0:
+            pct_8q.append((revenues[i] - revenues[i - 1]) / revenues[i - 1])
+    pct_4q = pct_8q[-4:] if len(pct_8q) >= 4 else pct_8q
+    avg_8q = float(np.mean(pct_8q)) if pct_8q else 0
+    avg_4q = float(np.mean(pct_4q)) if pct_4q else 0
+    long_run_pct = avg_4q if (avg_4q - avg_8q) > 0.01 else avg_8q
+    EXCESS_DECAY = 0.85
     forward = {}
     last_pos = (len(revenues) - 1) % 4
+    prev_rev = float(revenues[-1])
     for i in range(1, n_forward + 1):
-        proj_trend = last_trend + avg_inc * i
+        raw_trend = last_trend + avg_inc * i
         pos = (last_pos + i) % 4
-        forward[i] = round(proj_trend + last_seasonal.get(pos, 0))
+        raw_rev = raw_trend + last_seasonal.get(pos, 0)
+        stl_pct = (raw_rev - prev_rev) / prev_rev if prev_rev > 0 else 0
+        excess = stl_pct - long_run_pct
+        dampened_pct = long_run_pct + excess * (EXCESS_DECAY ** (i - 1))
+        proj_rev = prev_rev * (1 + dampened_pct)
+        forward[i] = round(proj_rev)
+        prev_rev = proj_rev
     return forward
 
 
@@ -726,7 +748,7 @@ def build_ticker_sheet(wb, ticker, data):
 
     ws.cell(row=R_VAR, column=2, value="   % Variance vs Consensus").font = F_IT
 
-    ws.cell(row=R_GD, column=2, value="Beat-Adj Q+2 Actual").font = F_BOLD
+    ws.cell(row=R_GD, column=2, value="Implied Q+2 Guide").font = F_BOLD
     ws.cell(row=R_GYP, column=2, value="   % YoY").font = F_IT
     ws.cell(row=R_GQP, column=2, value="   % QoQ").font = F_IT
     ws.cell(row=R_GYD, column=2, value="   $ YoY").font = F_IT
@@ -1012,9 +1034,7 @@ def build_ticker_sheet(wb, ticker, data):
 
         f = f'=IFERROR(({cr(R_REV, ci)}-{cr(R_CON, ci)})/{cr(R_CON, ci)},"-")'
         cell = ws.cell(row=R_VAR, column=ci, value=f)
-        # Determine sign for color from the pre-computed data
-        var_sign = pm["variance_pct"] if pm and pm["variance_pct"] is not None else 0
-        cell.font = F_IT_GREEN if var_sign >= 0 else F_IT_RED
+        cell.font = F_IT
         cell.number_format = N_PCT
         cell.alignment = A_R
 
@@ -1037,11 +1057,10 @@ def build_ticker_sheet(wb, ticker, data):
         gd = datetime.strptime(gi["period"], "%Y-%m-%d")
         gq = quarter_from_date(gi["period"])
 
-        # Guide row: beat-adjusted actual = consensus × (1 + beat %)
-        # This is the beat-cadence revenue estimate (best directional accuracy)
-        # Differs from STL revenue row — both views are shown
+        # Implied guide: our STL revenue estimate / (1 + beat %)
+        # Infers what management will guide to given our projected actual
         cell = ws.cell(row=R_GD, column=gi_ci,
-                       value=f"={cr(R_CON, gi_ci)}*(1+{beat_ref})")
+                       value=f"={cr(R_REV, gi_ci)}/(1+{beat_ref})")
         cell.font = F_BOLD
         cell.number_format = N_REV
         cell.alignment = A_R
@@ -1079,11 +1098,10 @@ def build_ticker_sheet(wb, ticker, data):
             cell.number_format = N_DLR
             cell.alignment = A_R
 
-        # % Variance guide vs consensus — formula, green/red
+        # % Variance guide vs consensus — formula, green/red via conditional formatting
         cell = ws.cell(row=R_GV, column=gi_ci,
                        value=f'=IFERROR(({cr(R_GD, gi_ci)}-{cr(R_CON, gi_ci)})/{cr(R_CON, gi_ci)},"-")')
-        var_sign = gi["gap_pct"] if gi["gap_pct"] is not None else 0
-        cell.font = F_IT_GREEN if var_sign >= 0 else F_IT_RED
+        cell.font = F_IT
         cell.number_format = N_PCT
         cell.alignment = A_R
 
@@ -1102,19 +1120,15 @@ def build_ticker_sheet(wb, ticker, data):
     ws.cell(row=R_T8, column=2, value="   Trailing 8Q Avg Beat").font = F_IT
     ws.cell(row=R_SEL, column=2, value="   Selected Beat Cadence").font = F_IT
 
-    # Trailing averages and selected beat — single values in label column (C)
+    # Selected beat cadence — hardcoded model input (blue)
     if bc:
-        c = ws.cell(row=R_T4, column=3, value=bc["avg_beat_4q"] / 100)
-        c.font = F_IT
-        c.number_format = N_PCT
-        c = ws.cell(row=R_T8, column=3, value=bc["avg_beat_8q"] / 100)
-        c.font = F_IT
-        c.number_format = N_PCT
         c = ws.cell(row=R_SEL, column=3, value=bc["selected_beat_pct"] / 100)
         c.font = F_IT_BLUE
         c.number_format = N_PCT
+    # Trailing 4Q/8Q formulas are set after the beat row is populated (see below)
 
     # Per-column data: actuals, pre-earnings consensus, beat formulas
+    beat_cols = []  # track column indices that have beat % data
     for col in cols:
         ci = col["ci"]
 
@@ -1145,11 +1159,11 @@ def build_ticker_sheet(wb, ticker, data):
                 # Beat / Miss (%) — formula, green/red
                 cell = ws.cell(row=R_ABP, column=ci,
                                value=f'=IFERROR(({cr(R_AREV, ci)}-{cr(R_ACON, ci)})/{cr(R_ACON, ci)},"-")')
-                # Determine color from raw data
                 beat_val = (col["rev"] - pec) / pec
                 cell.font = F_IT_GREEN if beat_val >= 0 else F_IT_RED
                 cell.number_format = N_PCT
                 cell.alignment = A_R
+                beat_cols.append(ci)
 
         elif col["t"] == "fy" and not col["est"]:
             # FY actuals sum
@@ -1184,6 +1198,41 @@ def build_ticker_sheet(wb, ticker, data):
                 cell.font = F_IT
                 cell.number_format = N_PCT
                 cell.alignment = A_R
+
+    # ── Trailing 4Q/8Q Avg Beat — live AVERAGE formulas from beat % row ──
+    if len(beat_cols) >= 4:
+        last4 = beat_cols[-4:]
+        refs4 = ",".join(cr(R_ABP, c) for c in last4)
+        c = ws.cell(row=R_T4, column=3, value=f"=AVERAGE({refs4})")
+        c.font = F_IT
+        c.number_format = N_PCT
+    if len(beat_cols) >= 8:
+        last8 = beat_cols[-8:]
+        refs8 = ",".join(cr(R_ABP, c) for c in last8)
+        c = ws.cell(row=R_T8, column=3, value=f"=AVERAGE({refs8})")
+        c.font = F_IT
+        c.number_format = N_PCT
+    elif len(beat_cols) >= 2:
+        # Fewer than 8 quarters: average all available
+        refs_all = ",".join(cr(R_ABP, c) for c in beat_cols)
+        c = ws.cell(row=R_T8, column=3, value=f"=AVERAGE({refs_all})")
+        c.font = F_IT
+        c.number_format = N_PCT
+
+    # ── Conditional formatting: green text for positive variance, red for negative ──
+    from openpyxl.formatting.rule import FormulaRule
+    green_font = Font(name="Times New Roman", size=9, italic=True, color=GREEN_TXT)
+    red_font = Font(name="Times New Roman", size=9, italic=True, color=RED_TXT)
+    var_range = f"{get_column_letter(DATA_COL)}{R_VAR}:{get_column_letter(last_ci)}{R_VAR}"
+    ws.conditional_formatting.add(var_range, FormulaRule(
+        formula=[f'{get_column_letter(DATA_COL)}{R_VAR}>0'], font=green_font))
+    ws.conditional_formatting.add(var_range, FormulaRule(
+        formula=[f'{get_column_letter(DATA_COL)}{R_VAR}<0'], font=red_font))
+    gv_range = f"{get_column_letter(DATA_COL)}{R_GV}:{get_column_letter(last_ci)}{R_GV}"
+    ws.conditional_formatting.add(gv_range, FormulaRule(
+        formula=[f'{get_column_letter(DATA_COL)}{R_GV}>0'], font=green_font))
+    ws.conditional_formatting.add(gv_range, FormulaRule(
+        formula=[f'{get_column_letter(DATA_COL)}{R_GV}<0'], font=red_font))
 
     # ── freeze panes ──
     ws.freeze_panes = f"{get_column_letter(DATA_COL)}{R_REV}"
@@ -1797,27 +1846,36 @@ def build_summary_sheet(wb, all_data):
     for idx, tk in enumerate(sorted_tickers):
         d = all_data[tk]
         gi = d.get("guide_inference")
-        r_tk = rev_first_tk + idx  # row for this ticker in the revenue section
+        r_tk = rev_first_tk + idx
 
         if gi:
-            # Implied guide
-            c = ws.cell(row=r_tk, column=guide_col, value=gi["implied_guide"] / 1e6)
-            c.font = F_DATA
-            c.number_format = N_REV
-            c.alignment = A_R
+            # Find Q+2 column letter on the ticker sheet
+            tk_map = tk_col_maps[tk]
+            gi_d = datetime.strptime(gi["period"], "%Y-%m-%d")
+            gi_yq = (gi_d.year, quarter_from_date(gi["period"]))
+            tk_col_letter = tk_map.get(gi_yq)
 
-            # Consensus for that quarter
-            if gi["consensus"]:
-                c = ws.cell(row=r_tk, column=guide_col + 1, value=gi["consensus"] / 1e6)
+            if tk_col_letter:
+                # Implied guide — cross-sheet reference to ticker sheet row 23
+                c = ws.cell(row=r_tk, column=guide_col,
+                            value=f"='{tk}'!{tk_col_letter}23")
                 c.font = F_DATA
                 c.number_format = N_REV
                 c.alignment = A_R
 
-            # Gap %
-            if gi["gap_pct"] is not None:
-                gap = gi["gap_pct"] / 100
-                c = ws.cell(row=r_tk, column=guide_col + 2, value=gap)
-                c.font = F_IT_GREEN if gap >= 0 else F_IT_RED
+                # Consensus — cross-sheet reference to ticker sheet row 15
+                c = ws.cell(row=r_tk, column=guide_col + 1,
+                            value=f"='{tk}'!{tk_col_letter}15")
+                c.font = F_DATA
+                c.number_format = N_REV
+                c.alignment = A_R
+
+                # Gap % — formula referencing the two cells above
+                gc = get_column_letter(guide_col)
+                gcc = get_column_letter(guide_col + 1)
+                c = ws.cell(row=r_tk, column=guide_col + 2,
+                            value=f'=IFERROR(({gc}{r_tk}-{gcc}{r_tk})/{gcc}{r_tk},"-")')
+                c.font = F_IT
                 c.number_format = N_PCT
                 c.alignment = A_R
 
@@ -1835,6 +1893,17 @@ def build_summary_sheet(wb, all_data):
                 cell.border = Border(left=FY_BORDER, right=FY_BORDER,
                                      top=cell.border.top, bottom=cell.border.bottom)
 
+    # ── Conditional formatting: green/red for guide gap % column ──
+    from openpyxl.formatting.rule import FormulaRule
+    gap_col_letter = get_column_letter(guide_col + 2)
+    gap_range = f"{gap_col_letter}{rev_first_tk}:{gap_col_letter}{rev_first_tk + n_tk - 1}"
+    green_font = Font(name="Times New Roman", size=9, italic=True, color=GREEN_TXT)
+    red_font = Font(name="Times New Roman", size=9, italic=True, color=RED_TXT)
+    ws.conditional_formatting.add(gap_range, FormulaRule(
+        formula=[f'{gap_col_letter}{rev_first_tk}>0'], font=green_font))
+    ws.conditional_formatting.add(gap_range, FormulaRule(
+        formula=[f'{gap_col_letter}{rev_first_tk}<0'], font=red_font))
+
     # ── Freeze panes: first 3 columns and first 2 rows ──
     ws.freeze_panes = "D3"
 
@@ -1842,6 +1911,10 @@ def build_summary_sheet(wb, all_data):
 # ── main ──────────────────────────────────────────────────────────────────
 
 def main():
+    # Ensure consensus overrides are applied before generating Excel
+    from ingest import apply_consensus_overrides
+    apply_consensus_overrides()
+
     print("Building data...")
     all_data = build_all()
     wb = Workbook()

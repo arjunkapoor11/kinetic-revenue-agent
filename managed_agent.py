@@ -368,16 +368,26 @@ pipeline for the specified tickers and report completion status after each step.
 ## Pipeline (execute in this exact order)
 1. ingest_data — Pull revenue actuals + consensus from FMP API (pass tickers array)
 2. ingest_transcripts — Fetch earnings call transcripts from Seeking Alpha (pass tickers array)
-3. analyze_transcripts — Claude analyzes transcripts for anomalous quarters (pass tickers array)
+3. analyze_transcripts — Call ONCE PER TICKER with ticker="SYMBOL". Do NOT pass an array.
 4. run_analysis — Call ONCE PER TICKER with ticker="SYMBOL". Do NOT pass an array.
 5. generate_dashboard — Write dashboard.html (no arguments)
 6. export_to_excel — Write kinetic_revenue_model.xlsx (no arguments)
+7. post_to_slack — Post guide signal summary to Slack (no arguments)
+
+## Standalone Tools (not part of the pipeline — call on demand)
+- earnings_prep(ticker="SYMBOL") — Returns structured JSON with revenue estimates, consensus, beat cadence, anomalies, and transcript analyses for a ticker. When this tool is called, use the returned data to write a comprehensive earnings prep document with these sections:
+  1. **Revenue Setup**: Our estimates (STL + beat-adjusted) vs consensus, expected beat $/%,  YoY growth, beat cadence, momentum
+  2. **Q+2 Guide Inference**: Implied guide, consensus, gap %, GUIDE ABOVE/BELOW/IN-LINE signal
+  3. **Historical Anomalies**: Anomalous quarters with sigma deviation, $ QoQ, transcript analysis context — classify as one-time vs structural
+  4. **Key Questions for the Call**: 5 targeted questions based on transcript analysis — focus on guide conservatism, deal clustering follow-through, NRR/expansion, product drivers, macro sensitivity
+  5. **Metrics to Watch**: 3-5 key metrics management typically calls out, flagging unusual patterns
+  6. **Prior Quarter Recap**: What happened last quarter — beat/miss, transcript highlights, surprises
 
 ## Rules
 - Execute only the steps specified.
-- Steps 1-3: pass the full tickers array.
-- Step 4: call run_analysis once per ticker (e.g. run_analysis(ticker="SNOW"), then run_analysis(ticker="DDOG"), etc.). Each call takes ~60-90 seconds.
-- Steps 5-6 take no arguments.
+- Steps 1-2: pass the full tickers array.
+- Steps 3-4: call once per ticker. Each call takes ~60-90 seconds.
+- Steps 5-7 take no arguments.
 - After each tool call, check if it succeeded or failed.
 - If a step FAILS: retry it exactly ONCE. If retry also fails, STOP — do not continue.
 - If a step succeeds: report briefly and continue to the next step.

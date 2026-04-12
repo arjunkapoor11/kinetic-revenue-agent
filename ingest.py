@@ -42,6 +42,37 @@ FISCAL_CALENDAR = {
 }
 
 
+# Manual consensus overrides — applied after every ingest run.
+# Use this for corrections where FMP data is wrong or missing.
+# Key: (ticker, period), Value: estimated_revenue in USD
+CONSENSUS_OVERRIDES = {
+    ("DDOG", "2026-03-31"): 956000000,
+}
+
+
+def apply_consensus_overrides():
+    """Apply manual consensus overrides independently of a full ingest run.
+    Can be called from export.py or any other module to ensure overrides
+    are always in the DB before generating output."""
+    if not CONSENSUS_OVERRIDES:
+        return
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST"), database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"), password=os.getenv("DB_PASSWORD"),
+        port=5432, sslmode="require")
+    cur = conn.cursor()
+    for (tk, period), rev in CONSENSUS_OVERRIDES.items():
+        cur.execute("""
+            INSERT INTO consensus_estimates (ticker, period, estimated_revenue)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ticker, period) DO UPDATE SET estimated_revenue = EXCLUDED.estimated_revenue
+        """, (tk, period, rev))
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"[overrides] Applied {len(CONSENSUS_OVERRIDES)} consensus override(s)")
+
+
 def fetch_and_store():
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -80,6 +111,16 @@ def fetch_and_store():
         ingest_pre_earnings_consensus(ticker, cur)
 
         print(f"Done: {ticker}")
+
+    # Apply manual consensus overrides
+    if CONSENSUS_OVERRIDES:
+        for (tk, period), rev in CONSENSUS_OVERRIDES.items():
+            cur.execute("""
+                INSERT INTO consensus_estimates (ticker, period, estimated_revenue)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (ticker, period) DO UPDATE SET estimated_revenue = EXCLUDED.estimated_revenue
+            """, (tk, period, rev))
+        print(f"Applied {len(CONSENSUS_OVERRIDES)} consensus override(s)")
 
     conn.commit()
     cur.close()

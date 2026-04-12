@@ -228,6 +228,28 @@ def export_to_excel() -> str:
 
 
 @mcp.tool()
+def earnings_prep(ticker: str = "") -> str:
+    """Fetch raw earnings preparation data for a ticker from RDS.
+    Returns structured JSON with revenue estimates, consensus, beat cadence,
+    recent anomalies, and transcript analyses. The agent should use this data
+    to synthesize a comprehensive earnings prep document.
+
+    Args:
+        ticker: A single ticker symbol (e.g. "SNOW"). Required.
+    """
+    if not ticker:
+        return "[earnings_prep] FAILED — ticker is required."
+
+    def run():
+        sys.path.insert(0, str(PROJECT_DIR))
+        from earnings_prep import fetch_earnings_data
+        data = fetch_earnings_data(ticker)
+        print(json.dumps(data, indent=2))
+
+    return _fmt(f"earnings_prep({ticker})", _run(run))
+
+
+@mcp.tool()
 def post_to_slack() -> str:
     """Step 7: Post pipeline summary to Slack #software-dashboard channel.
     Reads the most recent guide inference signals from the database and

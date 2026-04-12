@@ -231,7 +231,7 @@ def predict_quarter(actuals_before, pec_for_quarter, pec_all_before):
 
 
 def _stl_project_backtest(actuals_before, n_forward=2):
-    """STL projection for backtest — returns dict of offset -> revenue."""
+    """STL with excess-decay dampening — mirrors agent.py."""
     try:
         from statsmodels.tsa.seasonal import STL
         import numpy as np
@@ -240,6 +240,11 @@ def _stl_project_backtest(actuals_before, n_forward=2):
     revenues = [a["revenue"] for a in actuals_before]
     if len(revenues) < 12:
         return None
+    pct_8 = [(revenues[i]-revenues[i-1])/revenues[i-1]
+             for i in range(max(1,len(revenues)-8), len(revenues)) if revenues[i-1]>0]
+    pct_4 = pct_8[-4:] if len(pct_8)>=4 else pct_8
+    if pct_4 and pct_8 and (np.mean(pct_4)-np.mean(pct_8))>0.01 and len(revenues)>12:
+        revenues = revenues[-12:]
     series = np.array(revenues, dtype=float)
     stl = STL(series, period=4, robust=True)
     result = stl.fit()
@@ -253,12 +258,28 @@ def _stl_project_backtest(actuals_before, n_forward=2):
         pos = i % 4
         if pos not in last_seasonal:
             last_seasonal[pos] = float(seasonal_comp[i])
+    pct_8q = []
+    for i in range(max(1, len(revenues) - 8), len(revenues)):
+        if revenues[i - 1] > 0:
+            pct_8q.append((revenues[i] - revenues[i - 1]) / revenues[i - 1])
+    pct_4q = pct_8q[-4:] if len(pct_8q) >= 4 else pct_8q
+    avg_8q = float(np.mean(pct_8q)) if pct_8q else 0
+    avg_4q = float(np.mean(pct_4q)) if pct_4q else 0
+    long_run_pct = avg_4q if (avg_4q - avg_8q) > 0.01 else avg_8q
+    EXCESS_DECAY = 0.85
     forward = {}
     last_pos = (len(revenues) - 1) % 4
+    prev_rev = float(revenues[-1])
     for i in range(1, n_forward + 1):
-        proj_trend = last_trend + avg_inc * i
+        raw_trend = last_trend + avg_inc * i
         pos = (last_pos + i) % 4
-        forward[i] = round(proj_trend + last_seasonal.get(pos, 0))
+        raw_rev = raw_trend + last_seasonal.get(pos, 0)
+        stl_pct = (raw_rev - prev_rev) / prev_rev if prev_rev > 0 else 0
+        excess = stl_pct - long_run_pct
+        dampened_pct = long_run_pct + excess * (EXCESS_DECAY ** (i - 1))
+        proj_rev = prev_rev * (1 + dampened_pct)
+        forward[i] = round(proj_rev)
+        prev_rev = proj_rev
     return forward
 
 

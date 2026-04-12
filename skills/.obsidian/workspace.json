@@ -185,11 +185,11 @@
   },
   "active": "021712ee1c499d8a",
   "lastOpenFiles": [
-    "deployment.md",
-    "transcript-analysis.md",
-    "managed-agents.md",
     "SKILL.md",
+    "transcript-analysis.md",
     "analysis-framework.md",
+    "deployment.md",
+    "managed-agents.md",
     "dashboard.md",
     "data-ingestion.md"
   ]
