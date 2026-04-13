@@ -54,6 +54,19 @@ CREATE TABLE IF NOT EXISTS pre_earnings_consensus (
     estimated_revenue BIGINT,
     UNIQUE(ticker, period)
 );
+
+CREATE TABLE IF NOT EXISTS ticker_projections (
+    ticker VARCHAR(10),
+    period VARCHAR(20),
+    projected_revenue NUMERIC,
+    projected_qoq NUMERIC,
+    method VARCHAR(50),
+    beat_cadence NUMERIC,
+    beat_window VARCHAR(10),
+    momentum VARCHAR(20),
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (ticker, period)
+);
 """)
 
 conn.commit()

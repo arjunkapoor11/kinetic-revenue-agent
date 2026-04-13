@@ -45,6 +45,65 @@ def next_period(period_str, steps=1):
     return d.strftime("%Y-%m-%d")
 
 
+def _compute_implied_move(ticker):
+    """Compute implied earnings move from the nearest post-earnings options expiration.
+
+    Implied move = (ATM call price + ATM put price) / stock price.
+    Returns dict with implied_move_pct, stock_price, expiration, or None on failure.
+    """
+    try:
+        import yfinance as yf
+
+        tk = yf.Ticker(ticker)
+        price = tk.fast_info.get("lastPrice") or tk.info.get("currentPrice")
+        if not price or price <= 0:
+            return None
+
+        # Get the nearest options expiration
+        expirations = tk.options
+        if not expirations:
+            return None
+
+        # Use the first available expiration (nearest)
+        exp = expirations[0]
+        chain = tk.option_chain(exp)
+        calls = chain.calls
+        puts = chain.puts
+
+        if calls.empty or puts.empty:
+            return None
+
+        # Find ATM strike (closest to current price)
+        atm_strike = calls.iloc[(calls["strike"] - price).abs().argsort().iloc[0]]["strike"]
+
+        # Get ATM call and put mid prices
+        atm_call = calls[calls["strike"] == atm_strike]
+        atm_put = puts[puts["strike"] == atm_strike]
+
+        if atm_call.empty or atm_put.empty:
+            return None
+
+        call_ask = atm_call.iloc[0]["ask"]
+        put_ask = atm_put.iloc[0]["ask"]
+
+        if call_ask <= 0 or put_ask <= 0:
+            return None
+
+        implied_move_pct = round((call_ask + put_ask) / price, 4)
+
+        return {
+            "implied_move_pct": implied_move_pct,
+            "current_price": round(price, 2),
+            "atm_strike": float(atm_strike),
+            "call_ask": round(call_ask, 2),
+            "put_ask": round(put_ask, 2),
+            "implied_move_expiry": exp,
+        }
+    except Exception as e:
+        print(f"[implied_move] {ticker}: {type(e).__name__}: {e}")
+        return None
+
+
 def fetch_earnings_data(ticker):
     """Fetch all data needed for earnings prep. Returns a dict (JSON-serializable)."""
     conn = get_conn()
@@ -213,6 +272,9 @@ def fetch_earnings_data(ticker):
     else:
         momentum = "NEUTRAL"
 
+    # ── Implied move from options ────────────────────────────────────────
+    implied_move = _compute_implied_move(ticker)
+
     # ── Assemble output ───────────────────────────────────────────────────
 
     return {
@@ -250,6 +312,7 @@ def fetch_earnings_data(ticker):
             "count": len(transcript_analyses),
         },
         "latest_agent_report": latest_report[:3000] if latest_report else None,
+        "implied_move": implied_move,
     }
 
 

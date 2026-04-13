@@ -472,8 +472,72 @@ def supplement_estimates_from_earnings(ticker, estimates, actuals):
 
 # ── build all ticker data ─────────────────────────────────────────────────
 
+def _load_persisted_projections(ticker):
+    """Load projections from ticker_projections table. Returns list of dicts or None."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT period, projected_revenue, projected_qoq, method,
+                          beat_cadence, beat_window, momentum
+                   FROM ticker_projections
+                   WHERE ticker=%s ORDER BY period""", (ticker,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    if not rows:
+        return None, None, None
+    proj = []
+    for per, rev, qoq_val, method, bc_pct, bc_win, mom in rows:
+        q = quarter_from_date(str(per))
+        proj.append({
+            "period": str(per),
+            "quarter": f"Q{q}",
+            "projected_revenue": float(rev),
+            "projected_qoq": float(qoq_val),
+            "method": method,
+            "consensus": None,  # filled in below
+            "variance_pct": None,
+            "seasonal_trend": method,
+            "momentum": mom,
+        })
+    bc_pct = float(rows[0][4]) if rows[0][4] is not None else None
+    bc_win = rows[0][5]
+    mom = rows[0][6]
+    return proj, bc_pct, mom
+
+
 def build_all():
     out = {}
+
+    # Bulk-load all persisted projections
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""SELECT ticker, period, projected_revenue, projected_qoq, method,
+                          beat_cadence, beat_window, momentum
+                   FROM ticker_projections ORDER BY ticker, period""")
+    persisted = defaultdict(list)
+    persisted_meta = {}
+    for tk, per, rev, qoq_val, method, bc_pct, bc_win, mom in cur.fetchall():
+        q = quarter_from_date(str(per))
+        persisted[tk].append({
+            "period": str(per),
+            "quarter": f"Q{q}",
+            "projected_revenue": float(rev),
+            "projected_qoq": float(qoq_val),
+            "method": method,
+            "consensus": None,
+            "variance_pct": None,
+            "seasonal_trend": method,
+            "momentum": mom or "STABLE",
+        })
+        if tk not in persisted_meta:
+            persisted_meta[tk] = {
+                "beat_cadence_pct": float(bc_pct) if bc_pct is not None else None,
+                "beat_window": bc_win,
+                "momentum": mom or "STABLE",
+            }
+    cur.close()
+    conn.close()
+
     for tk in TICKERS:
         print(f"  {tk}...")
         act, est = get_db_data(tk)
@@ -484,7 +548,37 @@ def build_all():
         sea = compute_seasonality(qoq)
         anom = flag_anomalies(qoq, sea)
         bc = compute_beat_cadence(tk)
-        proj, sf, ml, mf = extrapolate(act, qoq, est, bc, sea)
+
+        # Use persisted projections if available, else compute fresh
+        if tk in persisted and persisted[tk]:
+            proj = persisted[tk]
+            ml = persisted_meta[tk]["momentum"]
+            mf = 1.0
+            sf = {}  # not needed when using persisted projections
+            # Fill in consensus from estimates
+            actual_yqs = set()
+            for a in act:
+                d = datetime.strptime(a["period"], "%Y-%m-%d")
+                actual_yqs.add((d.year, quarter_from_date(a["period"])))
+            est_yq = {}
+            for e in est:
+                if e["estimated_revenue"]:
+                    d = datetime.strptime(e["period"], "%Y-%m-%d")
+                    yq = (d.year, quarter_from_date(e["period"]))
+                    if yq not in actual_yqs:
+                        est_yq[yq] = e["estimated_revenue"]
+            for p in proj:
+                pd = datetime.strptime(p["period"], "%Y-%m-%d")
+                pq = quarter_from_date(p["period"])
+                con = est_yq.get((pd.year, pq))
+                p["consensus"] = con
+                if con:
+                    p["variance_pct"] = round((p["projected_revenue"] - con) / con * 100, 2)
+            print(f"    (using persisted projections, {len(proj)} quarters)")
+        else:
+            proj, sf, ml, mf = extrapolate(act, qoq, est, bc, sea)
+            print(f"    (computed fresh, {len(proj)} quarters)")
+
         gi = build_guide_inference(proj, bc)
         nq, cfy, nfy = consensus_comparison(act, proj, est)
         ta_map = get_transcript_analyses(tk)

@@ -375,13 +375,25 @@ pipeline for the specified tickers and report completion status after each step.
 7. post_to_slack — Post guide signal summary to Slack (no arguments)
 
 ## Standalone Tools (not part of the pipeline — call on demand)
-- earnings_prep(ticker="SYMBOL") — Returns structured JSON with revenue estimates, consensus, beat cadence, anomalies, and transcript analyses for a ticker. When this tool is called, use the returned data to write a comprehensive earnings prep document with these sections:
-  1. **Revenue Setup**: Our estimates (STL + beat-adjusted) vs consensus, expected beat $/%,  YoY growth, beat cadence, momentum
-  2. **Q+2 Guide Inference**: Implied guide, consensus, gap %, GUIDE ABOVE/BELOW/IN-LINE signal
-  3. **Historical Anomalies**: Anomalous quarters with sigma deviation, $ QoQ, transcript analysis context — classify as one-time vs structural
-  4. **Key Questions for the Call**: 5 targeted questions based on transcript analysis — focus on guide conservatism, deal clustering follow-through, NRR/expansion, product drivers, macro sensitivity
-  5. **Metrics to Watch**: 3-5 key metrics management typically calls out, flagging unusual patterns
-  6. **Prior Quarter Recap**: What happened last quarter — beat/miss, transcript highlights, surprises
+- earnings_prep(ticker="SYMBOL") — Returns structured JSON with revenue estimates, consensus, beat cadence, anomalies, implied options move, and transcript analyses for a ticker. When this tool is called, use the returned data to write a comprehensive earnings prep document with these sections:
+  1. **THE SETUP AT A GLANCE**: A summary table with one row per metric. Include these rows:
+     | Metric               | Value |
+     |----------------------|-------|
+     | Q+1 Consensus        | $XXX.XM |
+     | Our Estimate (Beat-adj) | $XXX.XM |
+     | Expected Beat        | +X.X% ($X.XM) |
+     | STL Projection       | $XXX.XM |
+     | YoY Growth           | +XX.X% |
+     | Beat Cadence         | X.X% avg (NQ window) |
+     | Momentum             | ACCELERATING / STABLE / DECELERATING |
+     | Options Implied Move | ±X.X% (expires YYYY-MM-DD) |
+     Use the implied_move data from the JSON: implied_move_pct * 100 for the percentage, implied_move_expiry for the date. If implied_move is null, show "N/A — options data unavailable".
+  2. **Revenue Setup**: Deeper narrative on our estimates (STL + beat-adjusted) vs consensus, expected beat $/%,  YoY growth, beat cadence, momentum. Include: "Options market is pricing a ±X.X% move into earnings (expires [date])" — compare to historical beat cadence to flag if market expectations seem high or low relative to typical beats.
+  3. **Q+2 Guide Inference**: Implied guide, consensus, gap %, GUIDE ABOVE/BELOW/IN-LINE signal
+  4. **Historical Anomalies**: Anomalous quarters with sigma deviation, $ QoQ, transcript analysis context — classify as one-time vs structural
+  5. **Key Questions for the Call**: 5 targeted questions based on transcript analysis — focus on guide conservatism, deal clustering follow-through, NRR/expansion, product drivers, macro sensitivity
+  6. **Metrics to Watch**: 3-5 key metrics management typically calls out, flagging unusual patterns
+  7. **Prior Quarter Recap**: What happened last quarter — beat/miss, transcript highlights, surprises
 
 ## Rules
 - Execute only the steps specified.

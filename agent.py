@@ -11,6 +11,20 @@ from collections import defaultdict
 
 load_dotenv()
 
+
+def load_from_secrets_manager(secret_name, region="us-east-2"):
+    """Load credentials from AWS Secrets Manager (production on EC2)."""
+    import boto3
+    sm = boto3.client("secretsmanager", region_name=region)
+    response = sm.get_secret_value(SecretId=secret_name)
+    secrets = json.loads(response["SecretString"])
+    for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD",
+                "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY", "SLACK_WEBHOOK"):
+        if key in secrets:
+            os.environ[key] = secrets[key]
+    print(f"[credentials] Loaded from Secrets Manager: {secret_name} ({region})")
+
+
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 TICKERS = [
@@ -864,6 +878,32 @@ def consensus_comparison(actuals, projections, estimates):
     return next_q_comp, fy_totals(current_fy), fy_totals(next_fy)
 
 
+def _save_projections(ticker, projections, beat_cadence, momentum_label):
+    """Upsert forward quarter projections into ticker_projections table."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    bc_pct = beat_cadence["selected_beat_pct"] if beat_cadence else None
+    bc_win = beat_cadence["selected_window"] if beat_cadence else None
+    for p in projections:
+        cur.execute("""
+            INSERT INTO ticker_projections
+                (ticker, period, projected_revenue, projected_qoq, method, beat_cadence, beat_window, momentum)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ticker, period) DO UPDATE SET
+                projected_revenue = EXCLUDED.projected_revenue,
+                projected_qoq = EXCLUDED.projected_qoq,
+                method = EXCLUDED.method,
+                beat_cadence = EXCLUDED.beat_cadence,
+                beat_window = EXCLUDED.beat_window,
+                momentum = EXCLUDED.momentum,
+                created_at = NOW()
+        """, (ticker, p["period"], p["projected_revenue"], p["projected_qoq"],
+              p["method"], bc_pct, bc_win, momentum_label))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 # ── agent execution ──────────────────────────────────────────────────────
 
 
@@ -890,6 +930,9 @@ def run_agent(ticker):
     projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj, stl_diag = \
         extrapolate(actuals, qoq, estimates, beat_cadence, seasonal,
                     anomalies=anomalies, transcript_analyses=transcript_analyses)
+
+    # Persist projections to ticker_projections table (before Claude call)
+    _save_projections(ticker, projections, beat_cadence, momentum_label)
 
     guide_inference = build_guide_inference(projections, beat_cadence)
     next_q, current_fy, next_fy = consensus_comparison(actuals, projections, estimates)
@@ -1016,7 +1059,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kinetic Revenue Agent")
     parser.add_argument("--tickers", type=str, default=None,
                         help="Comma-separated tickers (default: all)")
+    parser.add_argument("--secrets", type=str, default=None,
+                        help="AWS Secrets Manager secret name (omit for .env)")
+    parser.add_argument("--region", type=str, default="us-east-2",
+                        help="AWS region (default: us-east-2)")
     args = parser.parse_args()
+
+    if args.secrets:
+        load_from_secrets_manager(args.secrets, args.region)
+        # Re-initialize Anthropic client with the loaded API key
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else TICKERS
 

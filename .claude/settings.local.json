@@ -8,7 +8,10 @@
       "WebSearch",
       "Bash(pip show:*)",
       "Bash(scp:*)",
-      "Bash(PGPASSWORD='Kinetic2026!' psql:*)"
+      "Bash(PGPASSWORD='Kinetic2026!' psql:*)",
+      "Bash(git reset:*)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)"
     ]
   }
 }
