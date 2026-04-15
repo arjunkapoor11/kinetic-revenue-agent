@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED — use schedule_revenue.sh and schedule_sentiment.sh instead.
+# This script is kept for backward compatibility only.
+#
 # Kinetic Revenue Agent — Scheduled Pipeline Run
 # Runs full 48-ticker pipeline. Designed for cron on EC2.
 #
