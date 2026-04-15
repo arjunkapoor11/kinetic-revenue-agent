@@ -1,7 +1,10 @@
+import argparse
 import psycopg2
 import requests
 from dotenv import load_dotenv
 import os
+
+from credentials import load_credentials, add_credentials_args
 import statistics
 import calendar
 from datetime import datetime
@@ -2005,6 +2008,11 @@ def build_summary_sheet(wb, all_data):
 # ── main ──────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Export Kinetic revenue model to Excel")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
+
     # Ensure consensus overrides are applied before generating Excel
     from ingest import apply_consensus_overrides
     apply_consensus_overrides()

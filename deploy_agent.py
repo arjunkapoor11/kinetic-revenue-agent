@@ -29,6 +29,8 @@ from pathlib import Path
 import anthropic
 from dotenv import load_dotenv
 
+from credentials import load_credentials, add_credentials_args
+
 load_dotenv()
 
 PROJECT_DIR = Path(__file__).parent
@@ -239,7 +241,10 @@ def main():
                         help="Skip vault creation (use existing vault)")
     parser.add_argument("--skip-env", action="store_true",
                         help="Skip environment creation (use existing)")
+    add_credentials_args(parser)
     args = parser.parse_args()
+
+    load_credentials(secret_name=args.secrets, region=args.region)
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:

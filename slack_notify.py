@@ -7,12 +7,15 @@ to the #software-dashboard Slack channel via webhook.
 Can be run standalone: python slack_notify.py
 """
 
+import argparse
 import json
 import os
 import psycopg2
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+
+from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
 
@@ -265,4 +268,8 @@ def build_and_post():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Post pipeline summary to Slack")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
     build_and_post()

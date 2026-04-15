@@ -10,10 +10,14 @@ import math
 from collections import defaultdict
 from datetime import datetime
 
+import argparse
+
 import numpy as np
 import psycopg2
 from dotenv import load_dotenv
 from statsmodels.tsa.seasonal import STL
+
+from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
 
@@ -241,6 +245,11 @@ def sample_ticker(all_actuals, tk, mode):
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="STL dampening approach comparison")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
+
     print("Loading data...")
     all_actuals, all_pec = load_all()
 

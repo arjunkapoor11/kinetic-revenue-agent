@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "cowork-model-build.md",
+                "file": "deployment.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "cowork-model-build"
+              "title": "deployment"
             }
           }
         ],
@@ -200,13 +200,16 @@
   },
   "active": "3524e4eee0ee8d25",
   "lastOpenFiles": [
+    "x-sentiment-analysis.md",
     "analysis-framework.md",
+    "x_email_report.md",
     "cowork-model-build.md",
-    "SKILL.md",
     "transcript-analysis.md",
-    "deployment.md",
+    "data-ingestion.md",
+    "SKILL.md",
+    "output-formatting.md",
     "managed-agents.md",
     "dashboard.md",
-    "data-ingestion.md"
+    "deployment.md"
   ]
 }

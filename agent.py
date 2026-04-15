@@ -9,21 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from collections import defaultdict
 
+from credentials import load_credentials, add_credentials_args
+
 load_dotenv()
-
-
-def load_from_secrets_manager(secret_name, region="us-east-2"):
-    """Load credentials from AWS Secrets Manager (production on EC2)."""
-    import boto3
-    sm = boto3.client("secretsmanager", region_name=region)
-    response = sm.get_secret_value(SecretId=secret_name)
-    secrets = json.loads(response["SecretString"])
-    for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD",
-                "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY", "SLACK_WEBHOOK"):
-        if key in secrets:
-            os.environ[key] = secrets[key]
-    print(f"[credentials] Loaded from Secrets Manager: {secret_name} ({region})")
-
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -619,13 +607,15 @@ def stl_project(actuals, n_forward, anomalies=None, transcript_analyses=None):
     return forward, diag
 
 
-def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=None, transcript_analyses=None, n=None):
+def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=None, transcript_analyses=None, n=None, fwd_method="stl"):
     """Project forward n quarters using Kinetic methodology.
 
     Q+1: consensus x (1 + avg beat %) — anchored to sell-side estimates.
-    Q+2 through Q+n: STL seasonal decomposition (trend + seasonal projection).
-        Falls back to % QoQ decision tree if <12 quarters of history.
-    Forward-looking adjustments applied as overlays on STL output.
+    Q+2 through Q+n: method selected by `fwd_method`:
+        "stl"       — STL seasonal decomposition (default, falls back to decision tree if <12Q)
+        "avg_pct"   — simple average of last 2 years same-quarter % QoQ
+        "decision"  — % QoQ decision tree (trend classification + momentum)
+    Forward-looking adjustments applied as overlays.
     """
     if n is None:
         n = quarters_to_cutoff(actuals[-1]["period"])
@@ -664,10 +654,12 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
         anomalies or [], transcript_analyses or {})
     total_fwd_modifier = 1.0 + fwd_adj["deal_clustering_haircut"] + fwd_adj["nrr_modifier"] + fwd_adj["pipeline_modifier"]
 
-    # STL decomposition for Q+2+ projections
-    stl_result = stl_project(actuals, n, anomalies=anomalies, transcript_analyses=transcript_analyses)
-    stl_forward = stl_result[0] if stl_result else None
-    stl_diag = stl_result[1] if stl_result else None
+    # STL decomposition for Q+2+ projections (skip if not needed)
+    stl_forward, stl_diag = None, None
+    if fwd_method == "stl":
+        stl_result = stl_project(actuals, n, anomalies=anomalies, transcript_analyses=transcript_analyses)
+        stl_forward = stl_result[0] if stl_result else None
+        stl_diag = stl_result[1] if stl_result else None
     use_stl = stl_forward is not None
 
     last_period = actuals[-1]["period"]
@@ -704,6 +696,13 @@ def extrapolate(actuals, qoq_data, estimates, beat_cadence, seasonal, anomalies=
             proj_rev = round(consensus_match * (1 + beat_pct))
             method = "beat_adjusted"
             trend_used = "beat_adjusted"
+        elif fwd_method == "avg_pct" and i >= 2:
+            # Q+2+: simple average of last 2 years (8 quarters) same-quarter % QoQ
+            pct_hist = by_q_pct.get(q_key, [])
+            avg_pct_qoq = statistics.mean(pct_hist[-8:]) if pct_hist else 0
+            proj_rev = round(prev_rev * (1 + avg_pct_qoq))
+            method = "avg_pct_qoq"
+            trend_used = "avg_pct"
         elif use_stl and i >= 2:
             # Q+2+: STL projection with forward-looking adjustments
             # Use STL's own inter-step $ QoQ (not relative to prev_rev which may
@@ -907,7 +906,7 @@ def _save_projections(ticker, projections, beat_cadence, momentum_label):
 # ── agent execution ──────────────────────────────────────────────────────
 
 
-def run_agent(ticker):
+def run_agent(ticker, fwd_method="stl"):
     actuals, estimates = get_db_data(ticker)
 
     if not actuals:
@@ -929,7 +928,8 @@ def run_agent(ticker):
 
     projections, seasonal_forecasts, momentum_label, momentum_factor, qoq_yoy, fwd_adj, stl_diag = \
         extrapolate(actuals, qoq, estimates, beat_cadence, seasonal,
-                    anomalies=anomalies, transcript_analyses=transcript_analyses)
+                    anomalies=anomalies, transcript_analyses=transcript_analyses,
+                    fwd_method=fwd_method)
 
     # Persist projections to ticker_projections table (before Claude call)
     _save_projections(ticker, projections, beat_cadence, momentum_label)
@@ -1059,21 +1059,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kinetic Revenue Agent")
     parser.add_argument("--tickers", type=str, default=None,
                         help="Comma-separated tickers (default: all)")
-    parser.add_argument("--secrets", type=str, default=None,
-                        help="AWS Secrets Manager secret name (omit for .env)")
-    parser.add_argument("--region", type=str, default="us-east-2",
-                        help="AWS region (default: us-east-2)")
+    add_credentials_args(parser)
+    parser.add_argument("--method", type=str, default="stl",
+                        choices=["stl", "avg_pct", "decision"],
+                        help="Q+2+ extrapolation method (default: stl)")
     args = parser.parse_args()
 
-    if args.secrets:
-        load_from_secrets_manager(args.secrets, args.region)
-        # Re-initialize Anthropic client with the loaded API key
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    load_credentials(secret_name=args.secrets, region=args.region)
+    # Re-initialize Anthropic client with the loaded API key
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else TICKERS
 
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(run_agent, t): t for t in tickers}
+        futures = {pool.submit(run_agent, t, args.method): t for t in tickers}
         for future in as_completed(futures):
             ticker = futures[future]
             try:

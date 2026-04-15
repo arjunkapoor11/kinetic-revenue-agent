@@ -23,6 +23,8 @@ from pathlib import Path
 import anthropic
 from dotenv import load_dotenv
 
+from credentials import load_credentials, add_credentials_args
+
 load_dotenv()
 
 PROJECT_DIR = Path(__file__).parent
@@ -492,7 +494,10 @@ def main():
                         help="Comma-separated tickers (default: all 5)")
     parser.add_argument("--steps", type=str, default=None,
                         help="Comma-separated step numbers (default: all 1-6)")
+    add_credentials_args(parser)
     args = parser.parse_args()
+
+    load_credentials(secret_name=args.secrets, region=args.region)
 
     tickers = args.tickers.split(",") if args.tickers else DEFAULT_TICKERS
     steps = [int(s) for s in args.steps.split(",")] if args.steps else None

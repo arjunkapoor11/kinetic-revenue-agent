@@ -11,7 +11,9 @@
       "Bash(PGPASSWORD='Kinetic2026!' psql:*)",
       "Bash(git reset:*)",
       "Bash(git rm:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

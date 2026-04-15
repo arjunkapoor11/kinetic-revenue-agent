@@ -27,6 +27,8 @@ from datetime import datetime
 import numpy as np
 import psycopg2
 from dotenv import load_dotenv
+
+from credentials import load_credentials, add_credentials_args
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
@@ -401,7 +403,10 @@ def main():
     parser.add_argument("--train", action="store_true", help="Train and save models")
     parser.add_argument("--eval", action="store_true", help="Cross-validate")
     parser.add_argument("--features", action="store_true", help="Show feature importances")
+    add_credentials_args(parser)
     args = parser.parse_args()
+
+    load_credentials(secret_name=args.secrets, region=args.region)
 
     if not any([args.train, args.eval, args.features]):
         args.train = True

@@ -1,9 +1,12 @@
+import argparse
 import requests
 import psycopg2
 import time
 from dotenv import load_dotenv
 import os
 from datetime import datetime
+
+from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
 
@@ -372,4 +375,8 @@ def ingest_pre_earnings_consensus(ticker, cur):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Ingest revenue data from FMP API")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
     fetch_and_store()

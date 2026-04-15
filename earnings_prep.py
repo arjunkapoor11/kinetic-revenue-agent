@@ -8,6 +8,7 @@ Usage:
     python earnings_prep.py SNOW
 """
 
+import argparse
 import json
 import os
 import sys
@@ -18,6 +19,8 @@ from datetime import datetime
 
 import psycopg2
 from dotenv import load_dotenv
+
+from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
 
@@ -317,8 +320,10 @@ def fetch_earnings_data(ticker):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python earnings_prep.py TICKER")
-        sys.exit(1)
-    data = fetch_earnings_data(sys.argv[1].upper())
+    parser = argparse.ArgumentParser(description="Fetch earnings prep data")
+    parser.add_argument("ticker", type=str, help="Ticker symbol (e.g. SNOW)")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
+    data = fetch_earnings_data(args.ticker.upper())
     print(json.dumps(data, indent=2, default=str))

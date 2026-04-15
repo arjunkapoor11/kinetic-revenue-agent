@@ -1,6 +1,9 @@
+import argparse
 import psycopg2
 from dotenv import load_dotenv
 import os
+
+from credentials import load_credentials, add_credentials_args
 import json
 import statistics
 import calendar
@@ -777,6 +780,11 @@ def generate_html(data):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate Kinetic revenue dashboard")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
+
     data = build_data()
     html = generate_html(data)
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")

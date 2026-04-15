@@ -1,3 +1,4 @@
+import argparse
 import psycopg2
 import anthropic
 import os
@@ -5,6 +6,8 @@ import statistics
 from datetime import datetime
 from collections import defaultdict
 from dotenv import load_dotenv
+
+from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
 
@@ -234,4 +237,9 @@ def run_analysis():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Analyze earnings call transcripts")
+    add_credentials_args(parser)
+    args = parser.parse_args()
+    load_credentials(secret_name=args.secrets, region=args.region)
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     run_analysis()

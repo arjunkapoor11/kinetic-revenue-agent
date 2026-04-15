@@ -22,6 +22,8 @@ from datetime import datetime
 import psycopg2
 from dotenv import load_dotenv
 
+from credentials import load_credentials, add_credentials_args
+
 load_dotenv()
 
 MIN_HISTORY = 16  # warmup: need 16 prior quarters before scoring (8 excluded + 8 for seasonal baselines)
@@ -669,7 +671,10 @@ def print_comparison(q1_results, q2_results, all_actuals):
 def main():
     parser = argparse.ArgumentParser(description="Kinetic Revenue Model Backtest")
     parser.add_argument("--ticker", type=str, default=None, help="Single ticker to test")
+    add_credentials_args(parser)
     args = parser.parse_args()
+
+    load_credentials(secret_name=args.secrets, region=args.region)
 
     print("Loading data from DB...")
     all_actuals, all_pec = load_all_data()

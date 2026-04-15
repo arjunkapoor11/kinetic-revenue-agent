@@ -35,31 +35,7 @@ DEFAULT_TICKERS = ["SNOW", "DDOG", "MDB", "TENB", "QLYS"]
 
 # ── credential loading ─────────────────────────────────────────────────────
 
-def load_from_env():
-    """Load credentials from .env file (local development)."""
-    from dotenv import load_dotenv
-    load_dotenv(PROJECT_DIR / ".env")
-    print("[credentials] Loaded from .env")
-
-
-def load_from_secrets_manager(secret_name: str, region: str):
-    """Load credentials from AWS Secrets Manager (production).
-
-    Expected secret JSON keys: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD,
-    FMP_API_KEY, ANTHROPIC_API_KEY, RAPIDAPI_KEY
-    """
-    import boto3
-
-    client = boto3.client("secretsmanager", region_name=region)
-    response = client.get_secret_value(SecretId=secret_name)
-    secrets = json.loads(response["SecretString"])
-
-    for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD",
-                "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY", "SLACK_WEBHOOK"):
-        if key in secrets:
-            os.environ[key] = secrets[key]
-
-    print(f"[credentials] Loaded from Secrets Manager: {secret_name} ({region})")
+from credentials import load_credentials, add_credentials_args
 
 
 # ── tool execution helper ──────────────────────────────────────────────────
@@ -250,6 +226,163 @@ def earnings_prep(ticker: str = "") -> str:
 
 
 @mcp.tool()
+def run_x_sentiment(date: str = "", resend: bool = False) -> str:
+    """Run the X (Twitter) developer sentiment tracker and return the daily
+    summary. Searches X for developer posts about AI model providers (Anthropic,
+    OpenAI, Google, Meta, xAI, Mistral, DeepSeek, Qwen), analyzes sentiment
+    with Claude, and returns aggregated results.
+
+    Args:
+        date: Optional date in YYYY-MM-DD format. Defaults to today.
+              If data already exists for that date, returns cached summary
+              without re-fetching.
+        resend: If True, send the email report even if one was already
+                     sent today. Useful for regenerating reports after data
+                     changes.
+    """
+    def run():
+        import psycopg2
+        sys.path.insert(0, str(PROJECT_DIR))
+        from x_sentiment_tracker import (
+            get_daily_summary, run_pipeline, send_email_summary,
+            get_db_connection, reload_email_prompt,
+        )
+        from datetime import datetime as dt, timezone
+
+        target = date.strip() if date else None
+        target_date = (
+            dt.strptime(target, "%Y-%m-%d").date()
+            if target else dt.now(timezone.utc).date()
+        )
+
+        # Check if we already have a summary for this date
+        summary = get_daily_summary(target)
+        if summary["total_posts"] > 0:
+            print(json.dumps(summary, indent=2, default=str))
+
+            # Send email unless already sent (resend overrides)
+            conn = get_db_connection()
+            should_send = resend
+
+            if not should_send:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT 1 FROM x_email_reports WHERE date = %s",
+                    (target_date,),
+                )
+                should_send = cur.fetchone() is None
+                cur.close()
+
+            if should_send:
+                if resend:
+                    reload_email_prompt()
+                    print("[email] Regenerating report (resend — skills file reloaded)")
+                else:
+                    print("[email] Sending report (not yet sent)")
+                send_email_summary(conn, summary["by_provider"], target_date)
+            else:
+                print("[email] Report already sent for this date")
+
+            conn.close()
+            return
+
+        # No cached data — run the full pipeline
+        run_pipeline(test_mode=False)
+        summary = get_daily_summary(target)
+        print(json.dumps(summary, indent=2, default=str))
+
+        # Send email after pipeline run
+        if summary["total_posts"] > 0:
+            conn = get_db_connection()
+            send_email_summary(conn, summary["by_provider"], target_date)
+            conn.close()
+
+    return _fmt("run_x_sentiment", _run(run))
+
+
+@mcp.tool()
+def manage_distribution_list(action: str, email: str = "", name: str = "") -> str:
+    """Manage the X sentiment report email distribution list.
+
+    Args:
+        action: One of "add", "remove", or "list".
+        email: Email address (required for add/remove, ignored for list).
+        name: Display name (optional, used with add).
+
+    Examples:
+        manage_distribution_list(action="add", email="chris@kinetic.com", name="Chris")
+        manage_distribution_list(action="remove", email="old@kinetic.com")
+        manage_distribution_list(action="list")
+    """
+    def run():
+        import psycopg2
+        sys.path.insert(0, str(PROJECT_DIR))
+        from credentials import load_credentials
+        load_credentials()
+
+        conn = psycopg2.connect(
+            host=os.environ.get("DB_HOST"),
+            database=os.environ.get("DB_NAME"),
+            user=os.environ.get("DB_USER"),
+            password=os.environ.get("DB_PASSWORD"),
+            port=5432, sslmode="require",
+        )
+        cur = conn.cursor()
+
+        if action == "add":
+            if not email:
+                print("ERROR: email is required for add action")
+                return
+            cur.execute("""
+                INSERT INTO x_distribution_list (email, name, active)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (email)
+                DO UPDATE SET name = EXCLUDED.name, active = TRUE
+            """, (email.strip().lower(), name.strip()))
+            conn.commit()
+            print(f"Added {email} to distribution list")
+
+        elif action == "remove":
+            if not email:
+                print("ERROR: email is required for remove action")
+                return
+            cur.execute(
+                "UPDATE x_distribution_list SET active = FALSE WHERE email = %s",
+                (email.strip().lower(),),
+            )
+            conn.commit()
+            if cur.rowcount:
+                print(f"Removed {email} from distribution list")
+            else:
+                print(f"{email} not found in distribution list")
+
+        elif action == "list":
+            cur.execute(
+                "SELECT email, name, active, added_at "
+                "FROM x_distribution_list ORDER BY added_at"
+            )
+            rows = cur.fetchall()
+            if not rows:
+                print("Distribution list is empty")
+            else:
+                print(f"{'Email':<35s} {'Name':<20s} {'Active':<8s} Added")
+                print("-" * 80)
+                for r in rows:
+                    status = "yes" if r[2] else "no"
+                    print(f"{r[0]:<35s} {(r[1] or ''):<20s} {status:<8s} "
+                          f"{r[3].strftime('%Y-%m-%d') if r[3] else 'N/A'}")
+                active = sum(1 for r in rows if r[2])
+                print(f"\n{active} active, {len(rows) - active} inactive")
+        else:
+            print(f"ERROR: Unknown action '{action}'. Use add, remove, or list.")
+
+        cur.close()
+        conn.close()
+
+    return _fmt("manage_distribution_list", _run(run))
+
+
+@mcp.tool()
 def post_to_slack() -> str:
     """Step 7: Post pipeline summary to Slack #software-dashboard channel.
     Reads the most recent guide inference signals from the database and
@@ -270,17 +403,10 @@ def main():
     parser = argparse.ArgumentParser(description="Kinetic Revenue Agent MCP Server")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=3001, help="Port (default: 3001)")
-    parser.add_argument("--secrets", default=None,
-                        help="AWS Secrets Manager secret name (omit for .env)")
-    parser.add_argument("--region", default="us-east-2",
-                        help="AWS region (default: us-east-2)")
+    add_credentials_args(parser)
     args = parser.parse_args()
 
-    # Load credentials
-    if args.secrets:
-        load_from_secrets_manager(args.secrets, args.region)
-    else:
-        load_from_env()
+    load_credentials(secret_name=args.secrets, region=args.region)
 
     # Configure server host/port
     mcp.settings.host = args.host
@@ -289,7 +415,8 @@ def main():
     print(f"[server] Starting MCP server on {args.host}:{args.port}")
     print(f"[server] Streamable HTTP endpoint: http://{args.host}:{args.port}/mcp")
     print(f"[server] Tools: ingest_data, ingest_transcripts, analyze_transcripts, "
-          f"run_analysis, generate_dashboard, export_to_excel, post_to_slack")
+          f"run_analysis, generate_dashboard, export_to_excel, run_x_sentiment, "
+          f"manage_distribution_list, post_to_slack")
 
     mcp.run(transport="streamable-http")
 
