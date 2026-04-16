@@ -35,6 +35,7 @@ import psycopg2.extras
 import requests
 from dotenv import load_dotenv
 
+# credentials: load_credentials, add_credentials_args, auto_deploy
 from credentials import load_credentials, add_credentials_args
 
 load_dotenv()
