@@ -1379,16 +1379,39 @@ def generate_pdf_report(html_content, target_date):
             padding: 2px 6px !important;
             font-size: 8px !important;
         }
-        /* Post cards */
+        /* Post cards — container */
         div[style*="f8f9fa"], div[style*="#f8f9fa"] {
-            padding: 8px !important;
-            margin-bottom: 6px !important;
+            padding: 6px !important;
+            margin-bottom: 4px !important;
             font-size: 8px !important;
             page-break-inside: avoid;
         }
-        div[style*="f8f9fa"] p, div[style*="#f8f9fa"] p,
-        div[style*="f8f9fa"] span, div[style*="#f8f9fa"] span {
+        /* Post card header (provider/model bold line) */
+        div[style*="f8f9fa"] b, div[style*="#f8f9fa"] b,
+        div[style*="f8f9fa"] strong, div[style*="#f8f9fa"] strong {
             font-size: 8px !important;
+            font-weight: bold !important;
+            margin-bottom: 2px !important;
+        }
+        /* Post card body text */
+        div[style*="f8f9fa"] p, div[style*="#f8f9fa"] p {
+            font-size: 8px !important;
+            line-height: 1.3 !important;
+        }
+        /* Post card metadata (@handle, followers, likes/RT) */
+        div[style*="f8f9fa"] span, div[style*="#f8f9fa"] span {
+            font-size: 7px !important;
+            color: #666 !important;
+        }
+        /* Post card analyst note (italic) */
+        div[style*="f8f9fa"] em, div[style*="#f8f9fa"] em,
+        div[style*="f8f9fa"] i, div[style*="#f8f9fa"] i {
+            font-size: 8px !important;
+            font-style: italic !important;
+        }
+        /* Post card link */
+        div[style*="f8f9fa"] a, div[style*="#f8f9fa"] a {
+            font-size: 7px !important;
         }
         /* Scoring system box */
         div[style*="fafafa"], div[style*="#fafafa"] {
