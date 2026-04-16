@@ -1305,6 +1305,7 @@ def generate_email_report(conn, target_date, summaries):
             if "```" in html:
                 html = html[: html.rfind("```")]
         print(f"[email-report] Generated HTML report ({len(html)} chars)")
+        print(f"[email-report] HTML preview:\n{html[:3000]}")
         return html
     except anthropic.APIError as e:
         print(f"[email-report] Claude API error: {e}")
@@ -1337,89 +1338,113 @@ def generate_pdf_report(html_content, target_date):
         print("[pdf] weasyprint not installed — skipping PDF generation")
         return None
 
-    # PDF-specific CSS overrides — prepended so they take priority over
-    # the inline email styles without modifying the email HTML itself.
+    # PDF-specific CSS overrides — aggressive reset that does not rely on
+    # matching inline style attribute values (which vary by Claude generation).
+    # Uses universal selectors and element-type targeting instead.
     pdf_css = """
     <style>
         @page {
             size: A4;
             margin: 15mm;
         }
+
+        /* ── Global reset ─────────────────────────────────────────── */
         body {
             font-family: Helvetica, Arial, sans-serif;
             font-size: 9px !important;
-            line-height: 1.4;
+            line-height: 1.4 !important;
             color: #333;
             max-width: none;
             margin: 0;
             padding: 0;
         }
-        /* Section headers (Roman numeral headings) */
-        h1, h2, h3 {
+        /* Force every element to inherit the compact size */
+        body * {
+            font-size: inherit !important;
+        }
+
+        /* ── Headings ─────────────────────────────────────────────── */
+        h1 {
+            font-size: 13px !important;
+            margin-top: 10px !important;
+            margin-bottom: 4px !important;
+        }
+        h2, h3 {
             font-size: 11px !important;
-            font-weight: bold;
+            font-weight: bold !important;
             margin-top: 14px !important;
             margin-bottom: 6px !important;
         }
-        h1 { font-size: 13px !important; }
-        p, li, span, td, th {
+
+        /* ── Body text ────────────────────────────────────────────── */
+        p, li, span, div {
             font-size: 9px !important;
+            line-height: 1.4 !important;
         }
-        /* Key Takeaway box */
-        div[style*="background"] {
+
+        /* ── Tables (Scorecard, Dominant Themes) ──────────────────── */
+        table { font-size: 8px !important; width: 100% !important; }
+        td, th {
+            font-size: 8px !important;
+            padding: 2px 6px !important;
+        }
+
+        /* ── Key Takeaway box (dark background near top) ──────────── */
+        body > div:first-child + div,
+        body > div:nth-child(2) {
             font-size: 10px !important;
             padding: 10px 14px !important;
         }
-        /* Tables: Provider Scorecard, Dominant Themes */
-        table {
-            font-size: 8px !important;
-            width: 100% !important;
+
+        /* ── Post cards ───────────────────────────────────────────── */
+        /* Target any div with border that contains post content.
+           Claude generates these as divs with background + border. */
+        div > div > div {
+            page-break-inside: avoid;
         }
-        table td, table th {
-            padding: 2px 6px !important;
+        /* Bold text inside nested divs (post card headers) */
+        div > div > div b,
+        div > div > div strong {
+            font-size: 8px !important;
+            margin-bottom: 2px !important;
+            display: block;
+        }
+        /* Italic text (analyst notes) */
+        em, i {
             font-size: 8px !important;
         }
-        /* Post cards — container */
-        div[style*="f8f9fa"], div[style*="#f8f9fa"] {
+        /* Links (View on X) */
+        a {
+            font-size: 7px !important;
+        }
+
+        /* ── Aggressive post card size override ───────────────────── */
+        /* Any div that is 3+ levels deep is likely a card or box.
+           Shrink everything inside it. */
+        div div div {
             padding: 6px !important;
             margin-bottom: 4px !important;
             font-size: 8px !important;
-            page-break-inside: avoid;
+            line-height: 1.3 !important;
         }
-        /* Post card header (provider/model bold line) */
-        div[style*="f8f9fa"] b, div[style*="#f8f9fa"] b,
-        div[style*="f8f9fa"] strong, div[style*="#f8f9fa"] strong {
-            font-size: 8px !important;
-            font-weight: bold !important;
-            margin-bottom: 2px !important;
-        }
-        /* Post card body text */
-        div[style*="f8f9fa"] p, div[style*="#f8f9fa"] p {
+        div div div * {
             font-size: 8px !important;
             line-height: 1.3 !important;
         }
-        /* Post card metadata (@handle, followers, likes/RT) */
-        div[style*="f8f9fa"] span, div[style*="#f8f9fa"] span {
+        div div div span {
             font-size: 7px !important;
             color: #666 !important;
         }
-        /* Post card analyst note (italic) */
-        div[style*="f8f9fa"] em, div[style*="#f8f9fa"] em,
-        div[style*="f8f9fa"] i, div[style*="#f8f9fa"] i {
-            font-size: 8px !important;
-            font-style: italic !important;
-        }
-        /* Post card link */
-        div[style*="f8f9fa"] a, div[style*="#f8f9fa"] a {
+        div div div a {
             font-size: 7px !important;
         }
-        /* Scoring system box */
-        div[style*="fafafa"], div[style*="#fafafa"] {
+
+        /* ── Scoring system / methodology (bottom boxes) ──────────── */
+        body > div:last-child {
             font-size: 8px !important;
             padding: 8px 12px !important;
         }
-        /* Small caps header */
-        div[style*="small-caps"] {
+        body > div:last-child * {
             font-size: 8px !important;
         }
     </style>
