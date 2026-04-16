@@ -32,7 +32,8 @@ def load_from_secrets_manager(secret_name=SECRET_NAME, region=SECRET_REGION):
     secrets = json.loads(response["SecretString"])
     for key in ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD",
                 "FMP_API_KEY", "ANTHROPIC_API_KEY", "RAPIDAPI_KEY",
-                "SLACK_WEBHOOK", "X_BEARER_TOKEN",
+                "SLACK_WEBHOOK", "SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID",
+                "X_BEARER_TOKEN",
                 "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
                 "EMAIL_FROM", "EMAIL_TO"):
         if key in secrets:

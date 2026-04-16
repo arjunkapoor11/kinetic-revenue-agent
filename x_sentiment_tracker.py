@@ -1455,6 +1455,50 @@ def get_distribution_list(conn):
     return [{"email": fallback, "name": ""}]
 
 
+# ── Slack PDF posting ─────────────────────────────────────────────────────
+
+def post_pdf_to_slack(pdf_path, target_date):
+    """Upload a PDF report to Slack via files.upload API."""
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    channel_id = os.getenv("SLACK_CHANNEL_ID")
+
+    if not bot_token or not channel_id:
+        print("[slack-pdf] SLACK_BOT_TOKEN / SLACK_CHANNEL_ID not set — skipping")
+        return False
+
+    if not pdf_path:
+        print("[slack-pdf] No PDF path — skipping")
+        return False
+
+    date_str = str(target_date)
+    filename = f"Kinetic_AI_Sentiment_{date_str}.pdf"
+
+    try:
+        with open(pdf_path, "rb") as f:
+            resp = requests.post(
+                "https://slack.com/api/files.upload",
+                headers={"Authorization": f"Bearer {bot_token}"},
+                data={
+                    "channels": channel_id,
+                    "initial_comment": f"Kinetic AI Developer Sentiment — {date_str}",
+                    "filename": filename,
+                    "filetype": "pdf",
+                },
+                files={"file": (filename, f, "application/pdf")},
+                timeout=30,
+            )
+        result = resp.json()
+        if result.get("ok"):
+            print(f"[slack-pdf] Posted {filename} to channel")
+            return True
+        else:
+            print(f"[slack-pdf] Failed: {result.get('error', resp.text[:200])}")
+            return False
+    except Exception as e:
+        print(f"[slack-pdf] Failed: {e}")
+        return False
+
+
 # ── email notification (SMTP) ────────────────────────────────────────────────
 
 def send_email_summary(conn, summaries, target_date):
@@ -1528,6 +1572,7 @@ def send_email_summary(conn, summaries, target_date):
             server.send_message(msg)
         print(f"[email] Sent to {len(to_addrs)} recipients: "
               f"{', '.join(to_addrs)}")
+        post_pdf_to_slack(pdf_path, target_date)
         return True
     except Exception as e:
         print(f"[email] Failed: {e}")
