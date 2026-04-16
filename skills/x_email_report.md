@@ -209,3 +209,11 @@ Content — two subsections:
 ## Output Format
 
 Return ONLY the HTML body content (everything that goes inside the email body). Do not include <html>, <head>, or <body> tags — just the content divs. Do not wrap in markdown code fences.
+
+Use pure HTML tags — no markdown syntax. Specifically:
+- Use <strong> instead of **bold**
+- Use <em> instead of *italic*
+- Use <ul><li> instead of "- " bullet lines
+- Use <br> or <p> for line breaks, not bare newlines
+
+The output must be valid HTML that renders correctly without any markdown-to-HTML conversion.

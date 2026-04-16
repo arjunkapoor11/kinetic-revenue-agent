@@ -1338,9 +1338,6 @@ def generate_pdf_report(html_content, target_date):
         print("[pdf] weasyprint not installed — skipping PDF generation")
         return None
 
-    # PDF-specific CSS overrides — aggressive reset that does not rely on
-    # matching inline style attribute values (which vary by Claude generation).
-    # Uses universal selectors and element-type targeting instead.
     pdf_css = """
     <style>
         @page {
@@ -1351,110 +1348,131 @@ def generate_pdf_report(html_content, target_date):
         /* ── Global reset ─────────────────────────────────────────── */
         body {
             font-family: Helvetica, Arial, sans-serif;
-            font-size: 9px !important;
-            line-height: 1.4 !important;
+            font-size: 11px !important;
+            line-height: 1.5 !important;
             color: #333;
             max-width: none;
             margin: 0;
             padding: 0;
         }
-        /* Force every element to inherit the compact size */
         body * {
             font-size: inherit !important;
         }
 
         /* ── Headings ─────────────────────────────────────────────── */
         h1 {
-            font-size: 13px !important;
-            margin-top: 10px !important;
-            margin-bottom: 4px !important;
+            font-size: 15px !important;
+            margin-top: 12px !important;
+            margin-bottom: 6px !important;
         }
         h2, h3 {
-            font-size: 11px !important;
+            font-size: 13px !important;
             font-weight: bold !important;
-            margin-top: 14px !important;
-            margin-bottom: 6px !important;
+            margin-top: 16px !important;
+            margin-bottom: 8px !important;
         }
 
         /* ── Body text ────────────────────────────────────────────── */
         p, li, span, div {
-            font-size: 9px !important;
-            line-height: 1.4 !important;
+            font-size: 11px !important;
+            line-height: 1.5 !important;
         }
 
         /* ── Tables (Scorecard, Dominant Themes) ──────────────────── */
-        table { font-size: 8px !important; width: 100% !important; }
+        table { font-size: 9px !important; width: 100% !important; }
         td, th {
-            font-size: 8px !important;
-            padding: 2px 6px !important;
+            font-size: 9px !important;
+            padding: 3px 6px !important;
         }
 
         /* ── Key Takeaway box (dark background near top) ──────────── */
         body > div:first-child + div,
         body > div:nth-child(2) {
-            font-size: 10px !important;
-            padding: 10px 14px !important;
+            font-size: 11px !important;
+            padding: 12px 16px !important;
         }
 
         /* ── Post cards ───────────────────────────────────────────── */
-        /* Target any div with border that contains post content.
-           Claude generates these as divs with background + border. */
         div > div > div {
             page-break-inside: avoid;
         }
-        /* Bold text inside nested divs (post card headers) */
-        div > div > div b,
-        div > div > div strong {
-            font-size: 8px !important;
-            margin-bottom: 2px !important;
-            display: block;
-        }
-        /* Italic text (analyst notes) */
-        em, i {
-            font-size: 8px !important;
-        }
-        /* Links (View on X) */
-        a {
-            font-size: 7px !important;
-        }
-
-        /* ── Aggressive post card size override ───────────────────── */
-        /* Any div that is 3+ levels deep is likely a card or box.
-           Shrink everything inside it. */
         div div div {
-            padding: 6px !important;
-            margin-bottom: 4px !important;
-            font-size: 8px !important;
-            line-height: 1.3 !important;
+            padding: 10px !important;
+            margin-top: 12px !important;
+            margin-bottom: 12px !important;
+            font-size: 10px !important;
+            line-height: 1.4 !important;
         }
         div div div * {
-            font-size: 8px !important;
-            line-height: 1.3 !important;
+            font-size: 10px !important;
+            line-height: 1.4 !important;
         }
+        /* Post card headers */
+        div div div strong {
+            font-size: 10px !important;
+            margin-bottom: 4px !important;
+            display: block;
+        }
+        /* Metadata (@handle, followers, likes/RT) */
         div div div span {
-            font-size: 7px !important;
+            font-size: 9px !important;
             color: #666 !important;
         }
+        /* Analyst notes */
+        em, i {
+            font-size: 10px !important;
+        }
+        /* Links */
+        a {
+            font-size: 9px !important;
+        }
         div div div a {
-            font-size: 7px !important;
+            font-size: 9px !important;
         }
 
         /* ── Scoring system / methodology (bottom boxes) ──────────── */
         body > div:last-child {
-            font-size: 8px !important;
-            padding: 8px 12px !important;
+            font-size: 9px !important;
+            padding: 10px 14px !important;
         }
         body > div:last-child * {
-            font-size: 8px !important;
+            font-size: 9px !important;
         }
     </style>
     """
+
+    # Convert any leftover markdown syntax to HTML for PDF rendering
+    import re
+    pdf_html = html_content
+    pdf_html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', pdf_html)
+    pdf_html = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<em>\1</em>', pdf_html)
+    # Convert markdown bullet lines (- text) not already inside <li>
+    def _convert_bullets(text):
+        lines = text.split('\n')
+        out = []
+        in_list = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('- ') and '<li>' not in stripped:
+                if not in_list:
+                    out.append('<ul>')
+                    in_list = True
+                out.append(f'<li>{stripped[2:]}</li>')
+            else:
+                if in_list:
+                    out.append('</ul>')
+                    in_list = False
+                out.append(line)
+        if in_list:
+            out.append('</ul>')
+        return '\n'.join(out)
+    pdf_html = _convert_bullets(pdf_html)
 
     full_html = (
         '<!DOCTYPE html><html><head>'
         '<meta charset="utf-8">'
         f'{pdf_css}'
-        f'</head><body>{html_content}</body></html>'
+        f'</head><body>{pdf_html}</body></html>'
     )
 
     path = f"/tmp/kinetic_sentiment_{target_date}.pdf"
