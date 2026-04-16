@@ -1337,12 +1337,75 @@ def generate_pdf_report(html_content, target_date):
         print("[pdf] weasyprint not installed — skipping PDF generation")
         return None
 
-    # Wrap the content div in a full HTML document for weasyprint
+    # PDF-specific CSS overrides — prepended so they take priority over
+    # the inline email styles without modifying the email HTML itself.
+    pdf_css = """
+    <style>
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9px !important;
+            line-height: 1.4;
+            color: #333;
+            max-width: none;
+            margin: 0;
+            padding: 0;
+        }
+        /* Section headers (Roman numeral headings) */
+        h1, h2, h3 {
+            font-size: 11px !important;
+            font-weight: bold;
+            margin-top: 14px !important;
+            margin-bottom: 6px !important;
+        }
+        h1 { font-size: 13px !important; }
+        p, li, span, td, th {
+            font-size: 9px !important;
+        }
+        /* Key Takeaway box */
+        div[style*="background"] {
+            font-size: 10px !important;
+            padding: 10px 14px !important;
+        }
+        /* Tables: Provider Scorecard, Dominant Themes */
+        table {
+            font-size: 8px !important;
+            width: 100% !important;
+        }
+        table td, table th {
+            padding: 2px 6px !important;
+            font-size: 8px !important;
+        }
+        /* Post cards */
+        div[style*="f8f9fa"], div[style*="#f8f9fa"] {
+            padding: 8px !important;
+            margin-bottom: 6px !important;
+            font-size: 8px !important;
+            page-break-inside: avoid;
+        }
+        div[style*="f8f9fa"] p, div[style*="#f8f9fa"] p,
+        div[style*="f8f9fa"] span, div[style*="#f8f9fa"] span {
+            font-size: 8px !important;
+        }
+        /* Scoring system box */
+        div[style*="fafafa"], div[style*="#fafafa"] {
+            font-size: 8px !important;
+            padding: 8px 12px !important;
+        }
+        /* Small caps header */
+        div[style*="small-caps"] {
+            font-size: 8px !important;
+        }
+    </style>
+    """
+
     full_html = (
         '<!DOCTYPE html><html><head>'
         '<meta charset="utf-8">'
-        '<style>body { font-family: Helvetica, Arial, sans-serif; '
-        'max-width: 680px; margin: 0 auto; padding: 20px; }</style>'
+        f'{pdf_css}'
         f'</head><body>{html_content}</body></html>'
     )
 
