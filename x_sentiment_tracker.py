@@ -1423,7 +1423,7 @@ def run_pipeline(test_mode=False, backfill_only=False, force_refresh_accounts=Fa
     start = time.time()
     today = datetime.now(timezone.utc).date()
 
-    print(f"[pipeline] Starting X Sentiment Tracker — {today}")
+    print(f"[pipeline] Starting Kinetic X Sentiment Tracker — {today}")
     if test_mode:
         print("[pipeline] TEST MODE — 5 posts per provider")
 
