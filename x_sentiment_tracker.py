@@ -24,6 +24,7 @@ import smtplib
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -868,7 +869,7 @@ def build_daily_summary(conn, target_date=None):
     Returns a list of summary dicts for Slack/email.
     """
     if target_date is None:
-        target_date = datetime.now(timezone.utc).date()
+        target_date = datetime.now(ZoneInfo("America/New_York")).date()
 
     cur = conn.cursor()
     cur.execute("""
@@ -967,7 +968,7 @@ def build_daily_summary(conn, target_date=None):
 def get_daily_summary(target_date=None):
     """Fetch the daily summary for a given date. Used by the MCP tool."""
     if target_date is None:
-        target_date = datetime.now(timezone.utc).date()
+        target_date = datetime.now(ZoneInfo("America/New_York")).date()
     elif isinstance(target_date, str):
         target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
 
@@ -1421,7 +1422,7 @@ def run_pipeline(test_mode=False, backfill_only=False, force_refresh_accounts=Fa
         force_refresh_accounts: Force re-discovery of tracked accounts.
     """
     start = time.time()
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(ZoneInfo("America/New_York")).date()
 
     print(f"[pipeline] Starting Kinetic X Sentiment Tracker — {today}")
     if test_mode:

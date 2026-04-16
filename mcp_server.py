@@ -247,12 +247,13 @@ def run_x_sentiment(date: str = "", resend: bool = False) -> str:
             get_daily_summary, run_pipeline, send_email_summary,
             get_db_connection, reload_email_prompt,
         )
-        from datetime import datetime as dt, timezone
+        from datetime import datetime as dt
+        from zoneinfo import ZoneInfo
 
         target = date.strip() if date else None
         target_date = (
             dt.strptime(target, "%Y-%m-%d").date()
-            if target else dt.now(timezone.utc).date()
+            if target else dt.now(ZoneInfo("America/New_York")).date()
         )
 
         # Check if we already have a summary for this date
