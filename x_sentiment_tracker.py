@@ -672,23 +672,30 @@ def is_developer_signal(text, min_keywords=2):
     return hits >= min_keywords
 
 
-def filter_developer_posts(posts, test_mode=False):
+def filter_developer_posts(posts, test_mode=False, tracked_account_ids=None):
     """Filter posts: remove consumer content, then require dev keywords.
 
-    In test mode, requires 1 keyword. In production, requires 2.
+    In test mode, requires 1 keyword. In production, requires 2 — but
+    tracked accounts only need 1 keyword since they're pre-vetted developers.
     """
-    min_kw = 1 if test_mode else 2
+    default_min = 1 if test_mode else 2
+    tracked = tracked_account_ids or set()
 
     before = len(posts)
     posts = [p for p in posts if not _is_consumer_content(p["text"])]
     blocked = before - len(posts)
 
-    filtered = [p for p in posts if is_developer_signal(p["text"], min_kw)]
+    filtered = []
+    for p in posts:
+        min_kw = 1 if p.get("author_id", "") in tracked else default_min
+        if is_developer_signal(p["text"], min_kw):
+            filtered.append(p)
     dropped = len(posts) - len(filtered)
 
     if blocked or dropped:
         print(f"  [filter] Kept {len(filtered)}, blocked {blocked} consumer, "
-              f"dropped {dropped} (need {min_kw}+ dev keywords)")
+              f"dropped {dropped} (need {default_min}+ dev keywords, "
+              f"1 for tracked accounts)")
     return filtered
 
 
@@ -1454,10 +1461,17 @@ def run_pipeline(test_mode=False, backfill_only=False, force_refresh_accounts=Fa
             if force_refresh_accounts or _needs_account_refresh(conn):
                 discover_tracked_accounts(conn, bearer, test_mode=test_mode)
 
+            # ── load tracked account IDs for filter leniency ─────────────
+            cur = conn.cursor()
+            cur.execute("SELECT account_id FROM x_tracked_accounts")
+            tracked_account_ids = {r[0] for r in cur.fetchall()}
+            cur.close()
+
             # ── phase 1: tracked account posts (no engagement filter) ─────
             tracked_posts = search_tracked_account_posts(
                 bearer, conn, since=since, test_mode=test_mode)
-            tracked_posts = filter_developer_posts(tracked_posts, test_mode)
+            tracked_posts = filter_developer_posts(
+                tracked_posts, test_mode, tracked_account_ids)
             tracked_posts = deduplicate_posts(conn, tracked_posts)
 
             # ── phase 2: keyword search (with engagement filter) ──────────
@@ -1467,7 +1481,8 @@ def run_pipeline(test_mode=False, backfill_only=False, force_refresh_accounts=Fa
                 posts = search_keyword_posts(
                     bearer, provider, info, since=since,
                     max_results=100, test_mode=test_mode)
-                posts = filter_developer_posts(posts, test_mode)
+                posts = filter_developer_posts(
+                    posts, test_mode, tracked_account_ids)
                 keyword_posts.extend(posts)
                 time.sleep(1)
 
