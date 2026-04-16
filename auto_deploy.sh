@@ -7,7 +7,7 @@
 # Install: crontab -e, then add:
 #   */2 * * * * /home/ec2-user/revenue-agent/auto_deploy.sh
 
-WORKDIR=/home/ec2-user/revenue-agent
+WORKDIR=/home/ec2-user
 LOGFILE=/home/ec2-user/logs/deploy.log
 PYTHON=python3.11
 MCP_PORT=3001
