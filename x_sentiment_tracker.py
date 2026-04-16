@@ -1458,7 +1458,13 @@ def get_distribution_list(conn):
 # ── Slack PDF posting ─────────────────────────────────────────────────────
 
 def post_pdf_to_slack(pdf_path, target_date):
-    """Upload a PDF report to Slack via files.upload API."""
+    """Upload a PDF report to Slack via the new file upload API.
+
+    Three-step flow:
+      1. files.getUploadURLExternal — get a presigned upload URL
+      2. POST the file bytes to that URL
+      3. files.completeUploadExternal — finalize and share to channel
+    """
     bot_token = os.getenv("SLACK_BOT_TOKEN")
     channel_id = os.getenv("SLACK_CHANNEL_ID")
 
@@ -1472,28 +1478,56 @@ def post_pdf_to_slack(pdf_path, target_date):
 
     date_str = str(target_date)
     filename = f"Kinetic_AI_Sentiment_{date_str}.pdf"
+    headers = {"Authorization": f"Bearer {bot_token}"}
 
     try:
+        file_size = os.path.getsize(pdf_path)
+
+        # Step 1: get upload URL
+        resp = requests.get(
+            "https://slack.com/api/files.getUploadURLExternal",
+            headers=headers,
+            params={"filename": filename, "length": file_size},
+            timeout=15,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            print(f"[slack-pdf] getUploadURLExternal failed: {data.get('error')}")
+            return False
+
+        upload_url = data["upload_url"]
+        file_id = data["file_id"]
+
+        # Step 2: upload file bytes to the presigned URL
         with open(pdf_path, "rb") as f:
             resp = requests.post(
-                "https://slack.com/api/files.upload",
-                headers={"Authorization": f"Bearer {bot_token}"},
-                data={
-                    "channels": channel_id,
-                    "initial_comment": f"Kinetic AI Developer Sentiment — {date_str}",
-                    "filename": filename,
-                    "filetype": "pdf",
-                },
+                upload_url,
                 files={"file": (filename, f, "application/pdf")},
                 timeout=30,
             )
-        result = resp.json()
-        if result.get("ok"):
+        if resp.status_code != 200:
+            print(f"[slack-pdf] Upload failed: {resp.status_code} {resp.text[:200]}")
+            return False
+
+        # Step 3: finalize and share to channel
+        resp = requests.post(
+            "https://slack.com/api/files.completeUploadExternal",
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                "files": [{"id": file_id, "title": filename}],
+                "channel_id": channel_id,
+                "initial_comment": f"Kinetic AI Developer Sentiment — {date_str}",
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if data.get("ok"):
             print(f"[slack-pdf] Posted {filename} to channel")
             return True
         else:
-            print(f"[slack-pdf] Failed: {result.get('error', resp.text[:200])}")
+            print(f"[slack-pdf] completeUploadExternal failed: {data.get('error')}")
             return False
+
     except Exception as e:
         print(f"[slack-pdf] Failed: {e}")
         return False
