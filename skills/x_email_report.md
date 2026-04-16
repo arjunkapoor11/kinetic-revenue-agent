@@ -110,15 +110,18 @@ This section captures model launches and version updates automatically. If no ne
 
 Top 5 posts by investment_relevance score (minimum relevance 0.5 to appear).
 
-For each post, render as a card-style block with a light grey background (#f8f9fa), 1px solid #e0e0e0 border, 12px padding, margin-bottom 12px:
+For each post, render as a card-style block with a light grey background (#f8f9fa), 1px solid #e0e0e0 border, 10px padding, margin 10px 0:
 
-- **Header line:** Provider and model version (bold), investment relevance score in parentheses
-- **Post text:** Full text — do not truncate. Slightly larger font or distinct style to make it readable.
-- **Attribution line:** @handle (follower count) | [likes] likes • [retweets] RT
+- **Header line:** Provider, model version, and relevance on one line:
+  `<strong>Anthropic — Claude Sonnet 4</strong> <span style="color:#666">(0.9)</span>`
+- **Post text:** Full text in a <p> tag — do not truncate.
+- **Attribution line:** <span> with @handle (follower count) | [likes] likes • [retweets] RT</span>
 - **Link:** Clickable "View on X" linking to https://x.com/i/web/status/{post_id}
-- **Analyst note:** Italicized, 1-2 sentences on why this matters for Kinetic's position
+- **Analyst note:** <em>1-2 sentences on why this matters for Kinetic's position</em>
 
 The likes and retweets data is in the `top_posts` array as `likes` and `retweets` fields. Format engagement as e.g. "482 likes • 72 RT".
+
+Keep the card HTML simple and flat — avoid deeply nested divs inside cards. One div container with p, span, a, and em children.
 
 If fewer than 3 posts meet the 0.5 threshold, include the top 3 regardless of score and note the low signal day.
 

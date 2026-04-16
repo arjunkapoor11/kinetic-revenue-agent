@@ -1348,7 +1348,7 @@ def generate_pdf_report(html_content, target_date):
         /* ── Global reset ─────────────────────────────────────────── */
         body {
             font-family: Helvetica, Arial, sans-serif;
-            font-size: 11px !important;
+            font-size: 12px !important;
             line-height: 1.5 !important;
             color: #333;
             max-width: none;
@@ -1361,12 +1361,12 @@ def generate_pdf_report(html_content, target_date):
 
         /* ── Headings ─────────────────────────────────────────────── */
         h1 {
-            font-size: 15px !important;
+            font-size: 16px !important;
             margin-top: 12px !important;
             margin-bottom: 6px !important;
         }
         h2, h3 {
-            font-size: 13px !important;
+            font-size: 14px !important;
             font-weight: bold !important;
             margin-top: 16px !important;
             margin-bottom: 8px !important;
@@ -1374,69 +1374,79 @@ def generate_pdf_report(html_content, target_date):
 
         /* ── Body text ────────────────────────────────────────────── */
         p, li, span, div {
-            font-size: 11px !important;
+            font-size: 12px !important;
             line-height: 1.5 !important;
         }
 
         /* ── Tables (Scorecard, Dominant Themes) ──────────────────── */
-        table { font-size: 9px !important; width: 100% !important; }
+        table { font-size: 10px !important; width: 100% !important; }
         td, th {
-            font-size: 9px !important;
+            font-size: 10px !important;
             padding: 3px 6px !important;
         }
 
         /* ── Key Takeaway box (dark background near top) ──────────── */
         body > div:first-child + div,
         body > div:nth-child(2) {
-            font-size: 11px !important;
+            font-size: 12px !important;
             padding: 12px 16px !important;
         }
 
         /* ── Post cards ───────────────────────────────────────────── */
-        div > div > div {
-            page-break-inside: avoid;
-        }
+        /* Container: keep together, clear spacing */
         div div div {
-            padding: 10px !important;
-            margin-top: 12px !important;
-            margin-bottom: 12px !important;
-            font-size: 10px !important;
+            display: block !important;
+            padding: 8px 10px !important;
+            margin: 10px 0 !important;
+            font-size: 11px !important;
             line-height: 1.4 !important;
+            page-break-inside: avoid !important;
+            page-break-before: auto !important;
+            page-break-after: auto !important;
         }
+        /* Every child inside a card: also avoid breaks */
         div div div * {
-            font-size: 10px !important;
+            font-size: 11px !important;
             line-height: 1.4 !important;
+            page-break-inside: avoid !important;
+        }
+        /* Collapse internal margins inside cards */
+        div div div p {
+            margin: 2px 0 !important;
+        }
+        div div div div {
+            margin: 2px 0 !important;
+            padding: 0 !important;
         }
         /* Post card headers */
         div div div strong {
-            font-size: 10px !important;
+            font-size: 11px !important;
             margin-bottom: 4px !important;
-            display: block;
         }
         /* Metadata (@handle, followers, likes/RT) */
         div div div span {
-            font-size: 9px !important;
+            font-size: 10px !important;
             color: #666 !important;
         }
         /* Analyst notes */
         em, i {
-            font-size: 10px !important;
+            font-size: 11px !important;
         }
         /* Links */
         a {
-            font-size: 9px !important;
+            font-size: 10px !important;
         }
         div div div a {
-            font-size: 9px !important;
+            font-size: 10px !important;
         }
 
         /* ── Scoring system / methodology (bottom boxes) ──────────── */
         body > div:last-child {
-            font-size: 9px !important;
+            font-size: 10px !important;
             padding: 10px 14px !important;
         }
         body > div:last-child * {
-            font-size: 9px !important;
+            font-size: 10px !important;
         }
     </style>
     """
