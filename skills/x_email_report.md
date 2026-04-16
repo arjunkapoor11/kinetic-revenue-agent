@@ -160,13 +160,18 @@ This section has two sub-sections. The first always appears. The second only app
 
 **Today's Flags**
 
-Always present. Generate 3-4 forward-looking observations derived directly from today's high-signal posts and provider data. Each flag follows this format:
+Always present. Generate 3-4 forward-looking observations derived directly from today's high-signal posts and provider data.
 
-"[Specific observation from today's data]. Watch for [specific thing to monitor] over the next [timeframe]."
+**Ordering:** Flags must be ordered by investment_relevance — the flag derived from the highest-relevance post comes first.
 
-These must be specific and actionable — tied to actual posts or data points from today, not generic commentary. Examples of good flags:
-- "Two separate developers reported migrating off Anthropic's batch API after repeated 500 errors. Watch for additional reliability complaints over the next 48 hours — a cluster would indicate a systemic issue."
-- "Three posts compared Claude and GPT-4o pricing for classification workloads, all favoring Claude. Watch for whether this pricing narrative spreads to other use cases this week."
+**Priority label:** The first flag (highest relevance) must be prefixed with "**Priority:**" in bold to distinguish it from the others.
+
+**Sentence variety:** Vary the structure across flags. No two consecutive flags should open the same way. Mix these approaches:
+- Lead with the investment implication: "Anthropic's batch API reliability is now a churn risk — two developers reported migration plans after repeated 500 errors this week."
+- Lead with the data point: "Three posts compared Claude and GPT-4o pricing for classification workloads, all favoring Claude. Watch for whether this pricing narrative spreads to other use cases this week."
+- Lead with the forward question: "Will OpenAI's rate limit changes push more teams to evaluate alternatives? Two mid-size teams flagged throughput constraints today."
+
+Each flag should end with a specific monitoring directive: what to watch, over what timeframe.
 
 Examples of bad flags (too generic — do not write these):
 - "Keep an eye on developer sentiment."
