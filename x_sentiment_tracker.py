@@ -1188,9 +1188,9 @@ def _fetch_7day_averages(conn, target_date):
                AVG(avg_sentiment) AS rolling_avg,
                COUNT(DISTINCT date) AS days_of_data
         FROM x_daily_summary
-        WHERE date BETWEEN %s - INTERVAL '7 days' AND %s - INTERVAL '1 day'
+        WHERE date BETWEEN %s::date - INTERVAL '7 days' AND %s::date - INTERVAL '1 day'
         GROUP BY provider
-    """, (target_date, target_date))
+    """, (str(target_date), str(target_date)))
     result = {}
     for row in cur.fetchall():
         result[row[0]] = {
