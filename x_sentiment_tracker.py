@@ -890,7 +890,7 @@ def build_daily_summary(conn, target_date=None):
                 JOIN x_posts p2 ON s2.post_id = p2.post_id
                 WHERE p2.provider = p.provider
                   AND s2.model_version_extracted = s.model_version_extracted
-                  AND DATE(s2.analyzed_at AT TIME ZONE 'UTC') = %s
+                  AND s2.analyzed_at::date = %s::date
                 ORDER BY p2.likes + p2.retweets DESC
                 LIMIT 1
             ) AS top_quote,
@@ -900,13 +900,13 @@ def build_daily_summary(conn, target_date=None):
                 JOIN x_posts p3 ON s3.post_id = p3.post_id
                 WHERE p3.provider = p.provider
                   AND s3.model_version_extracted = s.model_version_extracted
-                  AND DATE(s3.analyzed_at AT TIME ZONE 'UTC') = %s
+                  AND s3.analyzed_at::date = %s::date
                 ORDER BY s3.investment_relevance DESC
                 LIMIT 1
             ) AS top_investment_post
         FROM x_posts p
         JOIN x_sentiment s ON p.post_id = s.post_id
-        WHERE DATE(s.analyzed_at AT TIME ZONE 'UTC') = %s
+        WHERE s.analyzed_at::date = %s::date
         GROUP BY p.provider, s.model_version_extracted
         ORDER BY post_count DESC
     """, (target_date, target_date, target_date))
@@ -1154,7 +1154,7 @@ def _fetch_top_posts(conn, target_date, limit=5):
                s.key_quote, s.switching_signal, s.investment_relevance
         FROM x_posts p
         JOIN x_sentiment s ON p.post_id = s.post_id
-        WHERE DATE(s.analyzed_at AT TIME ZONE 'UTC') = %s
+        WHERE s.analyzed_at::date = %s::date
         ORDER BY s.investment_relevance DESC
         LIMIT %s
     """, (target_date, limit))
@@ -1206,22 +1206,22 @@ def _fetch_total_ingested(conn, target_date):
     cur = conn.cursor()
     cur.execute("""
         SELECT COUNT(*) FROM x_posts
-        WHERE DATE(timestamp AT TIME ZONE 'UTC') = %s
-           OR DATE(timestamp AT TIME ZONE 'UTC') IS NULL
+        WHERE timestamp::date = %s::date
+           OR (timestamp IS NULL
               AND post_id IN (
                   SELECT post_id FROM x_sentiment
-                  WHERE DATE(analyzed_at AT TIME ZONE 'UTC') = %s
-              )
+                  WHERE analyzed_at::date = %s::date
+              ))
     """, (target_date, target_date))
     total_ingested = cur.fetchone()[0]
     cur.execute("""
         SELECT COUNT(*) FROM x_sentiment
-        WHERE DATE(analyzed_at AT TIME ZONE 'UTC') = %s
+        WHERE analyzed_at::date = %s::date
     """, (target_date,))
     total_analyzed = cur.fetchone()[0]
     cur.execute("""
         SELECT COUNT(*) FROM x_sentiment
-        WHERE DATE(analyzed_at AT TIME ZONE 'UTC') = %s
+        WHERE analyzed_at::date = %s::date
           AND investment_relevance >= 0.6
     """, (target_date,))
     high_relevance = cur.fetchone()[0]
@@ -1250,7 +1250,7 @@ def generate_email_report(conn, target_date, summaries):
                s.model_version_extracted, s.category
         FROM x_posts p
         JOIN x_sentiment s ON p.post_id = s.post_id
-        WHERE DATE(s.analyzed_at AT TIME ZONE 'UTC') = %s
+        WHERE s.analyzed_at::date = %s::date
         ORDER BY s.investment_relevance DESC
     """, (target_date,))
     all_posts_summary = [
