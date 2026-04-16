@@ -26,6 +26,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from collections import defaultdict
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -1324,6 +1326,36 @@ def store_email_report(conn, target_date, email_html):
     print(f"[email-report] Stored report for {target_date}")
 
 
+def generate_pdf_report(html_content, target_date):
+    """Convert HTML email report to PDF using weasyprint.
+
+    Returns the file path on success, None on failure.
+    """
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        print("[pdf] weasyprint not installed — skipping PDF generation")
+        return None
+
+    # Wrap the content div in a full HTML document for weasyprint
+    full_html = (
+        '<!DOCTYPE html><html><head>'
+        '<meta charset="utf-8">'
+        '<style>body { font-family: Helvetica, Arial, sans-serif; '
+        'max-width: 680px; margin: 0 auto; padding: 20px; }</style>'
+        f'</head><body>{html_content}</body></html>'
+    )
+
+    path = f"/tmp/kinetic_sentiment_{target_date}.pdf"
+    try:
+        HTML(string=full_html).write_pdf(path)
+        print(f"[pdf] Generated {path}")
+        return path
+    except Exception as e:
+        print(f"[pdf] Generation failed: {e}")
+        return None
+
+
 # ── distribution list ─────────────────────────────────────────────────────
 
 def get_distribution_list(conn):
@@ -1388,22 +1420,43 @@ def send_email_summary(conn, summaries, target_date):
     # Store for future reference
     store_email_report(conn, target_date, email_html)
 
+    # Generate PDF attachment
+    pdf_path = generate_pdf_report(email_html, target_date)
+
     date_str = str(target_date)
     total = sum(s["post_count"] for s in summaries)
     to_addrs = [r["email"] for r in recipients]
 
-    msg = MIMEMultipart("alternative")
+    # Use mixed for attachment support, with alternative nested for body
+    msg = MIMEMultipart("mixed")
     msg["From"] = email_from
     msg["To"] = ", ".join(to_addrs)
     msg["Subject"] = f"Kinetic AI Developer Sentiment — {date_str}"
 
-    # Plain text fallback
+    # HTML + plain text body as alternative part
+    body = MIMEMultipart("alternative")
     plain = (f"Kinetic AI Developer Sentiment — {date_str}\n"
              f"{total} posts analyzed across "
              f"{len(set(s['provider'] for s in summaries))} providers.\n\n"
              f"View the full HTML report in an HTML-capable email client.")
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(email_html, "html"))
+    body.attach(MIMEText(plain, "plain"))
+    body.attach(MIMEText(email_html, "html"))
+    msg.attach(body)
+
+    # Attach PDF if generated
+    if pdf_path:
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_part = MIMEBase("application", "pdf")
+                pdf_part.set_payload(f.read())
+            encoders.encode_base64(pdf_part)
+            filename = f"Kinetic_AI_Sentiment_{date_str}.pdf"
+            pdf_part.add_header(
+                "Content-Disposition", "attachment", filename=filename)
+            msg.attach(pdf_part)
+            print(f"[email] Attached PDF: {filename}")
+        except Exception as e:
+            print(f"[email] PDF attachment failed: {e} — sending without")
 
     try:
         with smtplib.SMTP(smtp_host, smtp_port) as server:
