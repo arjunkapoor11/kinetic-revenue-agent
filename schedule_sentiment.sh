@@ -10,7 +10,7 @@
 
 set -uo pipefail
 
-WORKDIR=/home/ec2-user/revenue-agent
+WORKDIR=/home/ec2-user
 LOGDIR=/home/ec2-user/logs
 LOGFILE="${LOGDIR}/sentiment_$(date +%Y%m%d).log"
 PYTHON=python3.11
