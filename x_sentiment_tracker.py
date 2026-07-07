@@ -48,6 +48,10 @@ load_dotenv()
 
 SLACK_CHANNEL = "#software-dashboard"
 
+# Slack-only mode: the pipeline delivers the PDF report to Slack and does NOT
+# send email. Flip to True to re-enable SMTP email delivery.
+EMAIL_ENABLED = False
+
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 _PROJECT_DIR = Path(__file__).parent
@@ -1612,7 +1616,34 @@ def post_pdf_to_slack(pdf_path, target_date):
 # ── email notification (SMTP) ────────────────────────────────────────────────
 
 def send_email_summary(conn, summaries, target_date):
-    """Generate rich HTML report via Claude and send via SMTP."""
+    """Generate the rich HTML report, post the PDF to Slack, and email it.
+
+    Slack PDF upload and email delivery are independent: report generation
+    and the PDF are produced up front, the PDF is posted to Slack, and only
+    then is email attempted. A failure (or missing config) on the email side
+    no longer prevents the PDF from reaching Slack, and vice versa.
+    """
+    # Generate the report — needed for both the Slack PDF and the email body.
+    email_html = generate_email_report(conn, target_date, summaries)
+    if not email_html:
+        print("[report] Report generation failed — skipping PDF and email")
+        return False
+
+    # Store for future reference
+    store_email_report(conn, target_date, email_html)
+
+    # Generate the PDF once; used by both the Slack upload and the email attachment.
+    pdf_path = generate_pdf_report(email_html, target_date)
+
+    # ── Post PDF to Slack (independent of email delivery) ─────────────────
+    slack_ok = post_pdf_to_slack(pdf_path, target_date)
+
+    # ── Email delivery (disabled in Slack-only mode) ──────────────────────
+    if not EMAIL_ENABLED:
+        print("[email] Slack-only mode (EMAIL_ENABLED=False) — no email sent")
+        return slack_ok
+
+    # ── Send email (independent of the Slack upload above) ────────────────
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER")
@@ -1621,24 +1652,12 @@ def send_email_summary(conn, summaries, target_date):
 
     if not all([smtp_host, smtp_user, smtp_pass, email_from]):
         print("[email] SMTP not configured — skipping email")
-        return False
+        return slack_ok
 
     recipients = get_distribution_list(conn)
     if not recipients:
         print("[email] No recipients configured — skipping email")
-        return False
-
-    # Generate the report
-    email_html = generate_email_report(conn, target_date, summaries)
-    if not email_html:
-        print("[email] Report generation failed — skipping email")
-        return False
-
-    # Store for future reference
-    store_email_report(conn, target_date, email_html)
-
-    # Generate PDF attachment
-    pdf_path = generate_pdf_report(email_html, target_date)
+        return slack_ok
 
     date_str = str(target_date)
     total = sum(s["post_count"] for s in summaries)
@@ -1682,11 +1701,10 @@ def send_email_summary(conn, summaries, target_date):
             server.send_message(msg)
         print(f"[email] Sent to {len(to_addrs)} recipients: "
               f"{', '.join(to_addrs)}")
-        post_pdf_to_slack(pdf_path, target_date)
         return True
     except Exception as e:
         print(f"[email] Failed: {e}")
-        return False
+        return slack_ok
 
 
 # ── main pipeline ─────────────────────────────────────────────────────────────
@@ -1809,9 +1827,10 @@ def run_pipeline(test_mode=False, backfill_only=False, force_refresh_accounts=Fa
     summaries = build_daily_summary(conn, today)
 
     if summaries:
+        # Build the text summary for the log only — Slack receives the PDF
+        # report exclusively (via post_pdf_to_slack inside send_email_summary).
         message = build_slack_message(summaries, today)
         print("\n" + message)
-        post_to_slack(message)
         send_email_summary(conn, summaries, today)
     else:
         print("[pipeline] No data to summarize")
