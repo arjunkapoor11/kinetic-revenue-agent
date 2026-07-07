@@ -52,7 +52,7 @@ SLACK_CHANNEL = "#software-dashboard"
 # send email. Flip to True to re-enable SMTP email delivery.
 EMAIL_ENABLED = False
 
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 _PROJECT_DIR = Path(__file__).parent
 _ANALYSIS_PROMPT_PATH = _PROJECT_DIR / "skills" / "x-sentiment-analysis.md"
